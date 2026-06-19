@@ -75,6 +75,8 @@ Collision query
   output: signed correction distance, surface angle, optional owner
 ```
 
-The next validation step is a BizHawk or MAME trace at three checkpoints: flat
-ground, a slope, and the first jump landing. Those traces can confirm the carry
-contract, angle orientation, and the task fields that select collision planes.
+The next validation step is the BizHawk capture described in
+[`docs/runtime-tracing.md`](../docs/runtime-tracing.md): flat ground, a slope,
+the first jump landing, and a spindash-to-roll transition. Those traces can
+confirm the carry contract, angle orientation, and the task fields that select
+collision planes.
