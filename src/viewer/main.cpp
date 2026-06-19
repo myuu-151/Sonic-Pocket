@@ -8,6 +8,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -33,7 +34,8 @@ constexpr int kGroundMaxSpeed = 0x800;
 constexpr int kGroundSkidDeceleration = 0x120;
 constexpr int kSkidAnimationTicks = 12;
 constexpr int kSkidDustTicks = 8;
-constexpr int kSkidDustSpawnInterval = 3;
+constexpr int kSkidDustSpawnInterval = 6;
+constexpr float kSkidDustFootOffsetY = 11.0F;
 constexpr int kPeeloutSpeed = kGroundMaxSpeed;
 constexpr int kAirAcceleration = 0x10;
 constexpr int kAirMaxXSpeed = 0x800;
@@ -259,7 +261,8 @@ AnimationSequence load_effect_sequence(
     SDL_Renderer* renderer,
     const std::filesystem::path& data_directory,
     std::string_view name,
-    const std::vector<float>& durations) {
+    const std::vector<float>& durations,
+    const std::vector<std::pair<float, float>>& origins) {
     AnimationSequence sequence;
     for (std::size_t index = 0; index < durations.size(); ++index) {
         char filename[32]{};
@@ -275,8 +278,8 @@ AnimationSequence load_effect_sequence(
                 load_sprite_frame(
                     renderer,
                     data_directory / "effects" / filename,
-                    0.0F,
-                    0.0F),
+                    origins[index].first,
+                    origins[index].second),
                 durations[index],
             });
     }
@@ -553,7 +556,7 @@ void flip_player_facing(Player& player) {
 void spawn_skid_dust(Player& player) {
     player.dust_puffs.push_back(DustPuff{
         player.x(),
-        player.y() + 11.0F,
+        player.y() + kSkidDustFootOffsetY,
         kSkidDustTicks,
     });
 }
@@ -783,8 +786,8 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
                 skid_dust.frames.size() - 1);
             const SpriteFrame& dust = skid_dust.frames[frame_index].sprite;
             SDL_FRect dust_destination{
-                std::floor(puff.x - camera_x),
-                std::floor(puff.y - camera_y),
+                std::floor(puff.x - camera_x - dust.origin_x),
+                std::floor(puff.y - camera_y - dust.origin_y),
                 dust.width,
                 dust.height,
             };
@@ -924,7 +927,8 @@ int main(int argc, char* argv[]) {
         app.renderer,
         data_directory,
         "skid_dust",
-        {2.0F, 2.0F, 2.0F, 2.0F});
+        {2.0F, 2.0F, 2.0F, 2.0F},
+        {{3.0F, 4.0F}, {4.0F, 4.0F}, {3.0F, 4.0F}, {4.0F, 4.0F}});
     CollisionMask collision_mask = load_collision_mask(collision_mask_path);
     if (stage.value == nullptr || collision.value == nullptr ||
         !animation_sequence_loaded(sonic_animations.idle) ||
