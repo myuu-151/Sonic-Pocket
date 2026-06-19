@@ -51,9 +51,9 @@ The trace contains controller state and the following player-task fields:
 | X velocity | `0x6722` |
 | Y velocity | `0x6724` |
 | Collision radii | `0x673E` and `0x673F` |
-| Camera world origin | `0x506C` and `0x506E` |
-| Camera horizontal/vertical follow offsets | `0x67A4` and `0x67A6` |
-| Camera vertical follow target | `0x67BA` |
+| Plane 2 camera world origin | `0x506C` and `0x506E` |
+| Current player screen position | `0x67A4` and `0x67A6` |
+| Target player screen position | `0x67B8` and `0x67BA` |
 | Camera stage bounds | `0x507A` through `0x5080` |
 
 Once captured, the first analysis pass should locate frames where the task

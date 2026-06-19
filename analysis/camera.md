@@ -1,27 +1,28 @@
 # Camera system
 
-The first static camera pass identifies the world-space origin, stage bounds,
-and player follow offsets. A directed BizHawk capture is still needed to
-confirm the remaining vertical modes and facing-dependent horizontal target.
+The static camera pass identifies the Plane 2 world-space origin, stage
+bounds, and player screen-position targets. These names and call relationships
+were cross-checked against ValleyBell's public SPA disassembly release.
 
 ## Camera state
 
 | RAM address | Working name | Meaning |
 | ---: | --- | --- |
-| `0x506C` | `camera_x` | Horizontal world-space origin used by object transforms and tile-map upload. |
-| `0x506E` | `camera_y` | Vertical world-space origin used by object transforms and tile-map upload. |
-| `0x507A` | `camera_min_x` | Lower horizontal stage bound. |
-| `0x507C` | `camera_max_x` | Upper horizontal stage bound. |
-| `0x507E` | `camera_min_y` | Lower vertical stage bound. |
-| `0x5080` | `camera_max_y` | Upper vertical stage bound. |
-| `0x67A4` | `camera_follow_x_offset` | Player horizontal position within the viewport. |
-| `0x67A6` | `camera_follow_y_offset` | Player vertical position within the viewport. |
-| `0x67BA` | `camera_follow_y_target` | Desired vertical viewport offset. |
+| `0x506C` | `plane2_camera_x` | Plane 2 horizontal world-space origin. |
+| `0x506E` | `plane2_camera_y` | Plane 2 vertical world-space origin. |
+| `0x507A` | `plane2_camera_x_start` | Horizontal start limit at camera structure offset `+0x0E`. |
+| `0x507C` | `plane2_camera_x_end` | Horizontal end limit at camera structure offset `+0x10`. |
+| `0x507E` | `plane2_camera_y_end` | Vertical end limit at camera structure offset `+0x12`. |
+| `0x5080` | `plane2_camera_y_start` | Vertical start limit at camera structure offset `+0x14`. |
+| `0x67A4` | `player_screen_x_current` | Current player horizontal position within the viewport. |
+| `0x67A6` | `player_screen_y_current` | Current player vertical position within the viewport. |
+| `0x67B8` | `player_screen_x_target` | Optional horizontal target override. |
+| `0x67BA` | `player_screen_y_target` | Desired vertical viewport position. |
 
 `initialize_camera_horizontal_follow` at `0x39D0D5` directly establishes:
 
 ```text
-camera_follow_x_offset = player_x - camera_x
+player_screen_x_current = player_x - plane2_camera_x
 ```
 
 The render and map-upload paths both read `camera_x` and `camera_y`, while
@@ -29,10 +30,11 @@ player/object transforms subtract those values from world coordinates.
 
 ## Horizontal following
 
-`update_player_camera_follow` at `0x39C9D9` selects a horizontal target of
-either 48 or 112 pixels. The choice depends on player movement/facing state;
-the exact polarity remains to be runtime-confirmed. The current follow offset
-moves toward the selected target by no more than two pixels per player tick.
+`update_player_camera_follow` at `0x39C9D9` first uses
+`player_screen_x_target` when it is nonzero. Otherwise it selects 48 pixels
+when player sprite/facing bit 7 is clear and 112 pixels when bit 7 is set. The
+current screen position moves toward that target by no more than two pixels
+per player tick.
 
 The routine derives a camera correction from the player world X and the
 current follow offset, then clamps the resulting origin to
@@ -50,7 +52,7 @@ slides gradually rather than snapping.
 and clamps the resulting camera correction to
 `camera_min_y..camera_max_y`.
 
-The vertical follow offset itself is constrained to 8 through 136 pixels.
+The vertical screen position itself is constrained to 8 through 136 pixels.
 `update_player_camera_follow` moves it toward `camera_follow_y_target` by no
 more than four pixels per player tick. Static code also includes conditions
 that suppress downward or backward correction; these likely cover grounded
@@ -58,14 +60,14 @@ camera stability, death, scripted movement, and stage-specific locks.
 
 ## Runtime validation
 
-The BizHawk player tracer now records all camera fields. A useful directed
-capture should:
+The BizHawk player tracer records all camera fields. A directed capture remains
+useful as a regression fixture and to identify stage-specific locks:
 
 1. Stand still, then run right at full speed for several seconds.
 2. Reverse and run left for several seconds.
 3. Jump at the bottom of a tall arc or use a vertical spring.
 4. Continue until the camera reaches a stage boundary.
 
-The capture will establish which state selects horizontal targets 48 and 112,
-when vertical tracking begins, and whether camera values update on the same
+The capture will show the exact runtime timing of screen-target changes,
+vertical tracking, stage locks, and whether camera values update on the same
 30 Hz player cadence.

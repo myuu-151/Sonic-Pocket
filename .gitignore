@@ -10,6 +10,7 @@ Emu/
 
 # Local reverse-engineering applications and SDKs
 Tools/
+SonicPocketAdventure_disasm+tools/
 
 # Generated analysis and build output
 build/

@@ -155,7 +155,8 @@ VBlank, input polling, task scheduling, core player movement, spindash, roll,
 and the first collision pass are mapped. Full-height jump timing is now
 runtime-confirmed. Hurt, death, and vertical spring behavior are also mapped
 from a directed runtime trace. The camera origin, stage bounds, and static
-follow logic are mapped; the extended runtime tracer is ready to confirm its
-look-ahead polarity and vertical modes. The immediate target is that camera
-capture and stage-object state mapping, with a short-tap jump trace retained
-as a small variable-height validation task.
+follow logic are mapped and cross-checked against ValleyBell's public SPA
+disassembly release. That release also provides level, object, graphics, and
+sound format references. The immediate target is importing high-value symbols
+and specifying a ROM-driven level/object extractor, while runtime traces remain
+the regression source for timing and behavior.

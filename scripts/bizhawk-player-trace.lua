@@ -94,15 +94,16 @@ trace:write(table.concat({
     "y_velocity_s8_8",
     "collision_radius_x",
     "collision_radius_y",
-    "camera_x",
-    "camera_y",
-    "camera_follow_x",
-    "camera_follow_y",
-    "camera_follow_y_target",
-    "camera_min_x",
-    "camera_max_x",
-    "camera_min_y",
-    "camera_max_y"
+    "plane2_camera_x",
+    "plane2_camera_y",
+    "player_screen_x_current",
+    "player_screen_y_current",
+    "player_screen_x_target",
+    "player_screen_y_target",
+    "plane2_camera_x_start",
+    "plane2_camera_x_end",
+    "plane2_camera_y_end",
+    "plane2_camera_y_start"
 }, ","), "\n")
 trace:flush()
 
@@ -133,6 +134,7 @@ while true do
     local camera_y = read_s16(0x506E)
     local camera_follow_x = read_s16(0x67A4)
     local camera_follow_y = read_s16(0x67A6)
+    local camera_follow_x_target = read_s16(0x67B8)
     local camera_follow_y_target = read_s16(0x67BA)
     local camera_min_x = read_s16(0x507A)
     local camera_max_x = read_s16(0x507C)
@@ -140,7 +142,7 @@ while true do
     local camera_max_y = read_s16(0x5080)
 
     trace:write(string.format(
-        "%d,0x%08X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+        "%d,0x%08X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
         frame,
         state,
         buttons_current,
@@ -161,6 +163,7 @@ while true do
         camera_y,
         camera_follow_x,
         camera_follow_y,
+        camera_follow_x_target,
         camera_follow_y_target,
         camera_min_x,
         camera_max_x,
