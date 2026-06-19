@@ -56,5 +56,7 @@ later native-engine milestone.
 
 Camera movement uses the original stage bounds: X starts at 64 and ends 224
 pixels before the layout edge; Y starts at 64 and ends 216 pixels before the
-layout edge. Recenter therefore places the start marker at the game's mapped
-48-pixel horizontal follow target.
+layout edge. The extracted map includes the game's 64-pixel guard band, so the
+viewer samples `camera + 64` from the PNG while keeping the displayed camera
+coordinates in original game-space units. Recenter therefore places the start
+marker at the game's mapped 48-pixel horizontal follow target.

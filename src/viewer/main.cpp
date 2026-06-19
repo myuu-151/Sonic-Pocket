@@ -14,6 +14,7 @@ constexpr int kLogicalHeight = 152;
 constexpr int kDefaultWindowScale = 3;
 constexpr int kStageWidth = 6400;
 constexpr int kStageHeight = 992;
+constexpr float kStageGuardBand = 64.0F;
 constexpr float kCameraMinX = 64.0F;
 constexpr float kCameraMinY = 64.0F;
 constexpr float kCameraMaxX = static_cast<float>(kStageWidth - 224);
@@ -181,8 +182,8 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
     SDL_RenderClear(app.renderer);
 
     SDL_FRect source{
-        std::floor(camera_x),
-        std::floor(camera_y),
+        std::floor(camera_x + kStageGuardBand),
+        std::floor(camera_y + kStageGuardBand),
         static_cast<float>(kLogicalWidth),
         static_cast<float>(kLogicalHeight),
     };
