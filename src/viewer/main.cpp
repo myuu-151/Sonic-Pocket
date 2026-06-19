@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -18,6 +19,12 @@ constexpr int kLogicalHeight = 152;
 constexpr int kDefaultWindowScale = 3;
 constexpr int kStageWidth = 6400;
 constexpr int kStageHeight = 992;
+constexpr int kCollisionTileSize = 8;
+constexpr int kCollisionTilesWide = kStageWidth / kCollisionTileSize;
+constexpr int kCollisionTilesHigh = kStageHeight / kCollisionTileSize;
+constexpr int kLevelBlocksWide = kStageWidth / 32;
+constexpr int kLevelBlocksHigh = kStageHeight / 32;
+constexpr int kCollisionDefSize = 130;
 constexpr float kCameraMinX = 64.0F;
 constexpr float kCameraMinY = 64.0F;
 constexpr float kCameraMaxX = static_cast<float>(kStageWidth - 224);
@@ -32,6 +39,10 @@ constexpr int kGroundAcceleration = 0x20;
 constexpr int kGroundFriction = 0x20;
 constexpr int kGroundMaxSpeed = 0x800;
 constexpr int kGroundSkidDeceleration = 0x120;
+constexpr int kSlopeGravity = 0x18;
+constexpr int kSlopeProbeRadius = 4;
+constexpr int kGroundProbeUp = 18;
+constexpr int kGroundProbeDown = 24;
 constexpr int kSkidAnimationTicks = 12;
 constexpr int kSkidDustTicks = 8;
 constexpr int kSkidDustSpawnInterval = 6;
@@ -146,6 +157,8 @@ struct Player {
     bool input_down = false;
     int skid_ticks = 0;
     int skid_dust_cooldown = 0;
+    int ground_angle = 0;
+    float ground_slope = 0.0F;
     std::vector<DustPuff> dust_puffs;
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
@@ -158,16 +171,98 @@ struct Player {
 
 int facing_sign(const Player& player);
 int ground_velocity_x(const Player& player);
+int ground_velocity_y(const Player& player);
 bool input_matches_facing(const Player& player, int movement);
 
 struct CollisionMask {
     std::vector<unsigned char> pixels;
+    std::vector<unsigned char> floor_angles;
+    std::vector<unsigned char> plane2_layout;
+    std::vector<unsigned char> block_map;
+    std::vector<unsigned char> tile_collision;
+    std::vector<unsigned char> collision_defs;
 
     bool solid(int x, int y) const {
         if (x < 0 || x >= kStageWidth || y < 0 || y >= kStageHeight) {
             return true;
         }
         return pixels[static_cast<std::size_t>(y) * kStageWidth + x] != 0;
+    }
+
+    int floor_angle(int x, int y) const {
+        if (floor_angles.empty()) {
+            return 0;
+        }
+        const int tile_x = std::clamp(x / kCollisionTileSize, 0, kCollisionTilesWide - 1);
+        const int tile_y = std::clamp(y / kCollisionTileSize, 0, kCollisionTilesHigh - 1);
+        const unsigned char raw =
+            floor_angles[static_cast<std::size_t>(tile_y) * kCollisionTilesWide + tile_x];
+        return raw >= 0x80 ? static_cast<int>(raw) - 0x100 : static_cast<int>(raw);
+    }
+
+    static int read_s8(unsigned char value) {
+        return value >= 0x80 ? static_cast<int>(value) - 0x100 : static_cast<int>(value);
+    }
+
+    static int read_u16(const std::vector<unsigned char>& bytes, std::size_t offset) {
+        if (offset + 1 >= bytes.size()) {
+            return 0;
+        }
+        return static_cast<int>(bytes[offset]) |
+            (static_cast<int>(bytes[offset + 1]) << 8);
+    }
+
+    std::optional<std::pair<int, int>> vertical_response(int x, int y) const {
+        if (
+            plane2_layout.empty() ||
+            block_map.empty() ||
+            tile_collision.empty() ||
+            collision_defs.empty() ||
+            x < 0 ||
+            x >= kStageWidth ||
+            y < 0 ||
+            y >= kStageHeight) {
+            return std::nullopt;
+        }
+
+        const int block_x = x / 32;
+        const int block_y = y / 32;
+        const std::size_t layout_index =
+            static_cast<std::size_t>(block_y * kLevelBlocksWide + block_x) * 2;
+        const int block_id = read_u16(plane2_layout, layout_index);
+
+        const int tile_in_block_x = (x & 31) / 8;
+        const int tile_in_block_y = (y & 31) / 8;
+        const int tile_position = tile_in_block_y * 4 + tile_in_block_x;
+        const std::size_t block_offset =
+            static_cast<std::size_t>(block_id * 16 + tile_position) * 2;
+        const int tile_entry = read_u16(block_map, block_offset);
+        const int tile_id = tile_entry & 0x01FF;
+        int collision_type = read_u16(
+            tile_collision,
+            static_cast<std::size_t>(tile_id) * 2);
+        if (collision_type == 0xFFFF) {
+            collision_type = 0;
+        }
+
+        const bool flip_x = (tile_entry & 0x8000) != 0;
+        const std::size_t def_offset =
+            static_cast<std::size_t>(collision_type * 2 + (flip_x ? 1 : 0)) *
+            kCollisionDefSize;
+        if (def_offset + kCollisionDefSize > collision_defs.size()) {
+            return std::nullopt;
+        }
+
+        const int angle = read_s8(collision_defs[def_offset + 1]);
+        const int local_x = x & 7;
+        const int local_y = y & 7;
+        // ROM collision positions are bottom-up, while the viewer stores stage
+        // pixels top-down. NSI's height is divisible by 8, so
+        // 7 - (rom_y & 7) maps to the viewer's local_y.
+        const int table_index = local_y * 8 + (7 - local_x);
+        const int response = read_s8(
+            collision_defs[def_offset + 2 + 64 + table_index]);
+        return std::pair<int, int>{response, angle};
     }
 
     int first_solid_y(int x, int start_y, int end_y) const {
@@ -179,6 +274,13 @@ struct CollisionMask {
             }
         }
         return -1;
+    }
+
+    int surface_y_near(int x, int foot_y) const {
+        return first_solid_y(
+            x,
+            foot_y - kGroundProbeUp,
+            foot_y + kGroundProbeDown);
     }
 };
 
@@ -297,21 +399,53 @@ bool animation_sequence_loaded(const AnimationSequence& sequence) {
 }
 
 CollisionMask load_collision_mask(const std::filesystem::path& path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) {
+    auto read_binary = [](const std::filesystem::path& binary_path) {
+        std::ifstream stream(binary_path, std::ios::binary);
+        if (!stream) {
+            return std::vector<unsigned char>{};
+        }
+        return std::vector<unsigned char>(
+            std::istreambuf_iterator<char>(stream),
+            std::istreambuf_iterator<char>());
+    };
+
+    CollisionMask result;
+    result.pixels = read_binary(path);
+    if (result.pixels.empty()) {
         std::cerr << "Unable to load " << path << '\n';
         return {};
     }
-    CollisionMask result;
-    result.pixels.assign(
-        std::istreambuf_iterator<char>(stream),
-        std::istreambuf_iterator<char>());
     const auto expected =
         static_cast<std::size_t>(kStageWidth) * kStageHeight;
     if (result.pixels.size() != expected) {
         std::cerr << "Collision mask has " << result.pixels.size()
                   << " bytes; expected " << expected << '\n';
         result.pixels.clear();
+    }
+
+    result.floor_angles = read_binary(path.parent_path() / "collision-angle-y.bin");
+    if (!result.floor_angles.empty()) {
+        const auto expected_angles =
+            static_cast<std::size_t>(kCollisionTilesWide) * kCollisionTilesHigh;
+        if (result.floor_angles.size() != expected_angles) {
+            std::cerr << "Collision angle map has "
+                      << result.floor_angles.size() << " bytes; expected "
+                      << expected_angles << '\n';
+            result.floor_angles.clear();
+        }
+    }
+
+    result.plane2_layout = read_binary(path.parent_path() / "data" / "plane2.bin");
+    result.block_map = read_binary(path.parent_path() / "data" / "blocks.bin");
+    result.tile_collision = read_binary(path.parent_path() / "data" / "collision.bin");
+    result.collision_defs = read_binary(path.parent_path() / "collision-defs.bin");
+    if (
+        result.plane2_layout.empty() ||
+        result.block_map.empty() ||
+        result.tile_collision.empty() ||
+        result.collision_defs.empty()) {
+        std::cerr << "ROM collision response data is incomplete; "
+                     "falling back to collision mask sampling\n";
     }
     return result;
 }
@@ -545,6 +679,11 @@ int ground_velocity_x(const Player& player) {
     return facing_sign(player) * player.ground_speed;
 }
 
+int ground_velocity_y(const Player& player) {
+    (void)player;
+    return 0;
+}
+
 bool input_matches_facing(const Player& player, int movement) {
     return movement == facing_sign(player);
 }
@@ -573,6 +712,101 @@ void update_dust_puffs(Player& player) {
         player.dust_puffs.end());
 }
 
+int signed_angle_to_ground_force(int angle) {
+    constexpr float pi = 3.14159265358979323846F;
+    const float radians = static_cast<float>(angle) * pi / 128.0F;
+    return static_cast<int>(std::round(std::sin(radians) * kSlopeGravity));
+}
+
+bool find_floor_sample(const CollisionMask& collision, int x, int foot_y,
+                       int& surface_y, int& surface_angle) {
+    bool found = false;
+    int best_surface = 0;
+    int best_distance = 0;
+    int best_angle = 0;
+    for (int y = foot_y - kGroundProbeUp; y <= foot_y + kGroundProbeDown; ++y) {
+        const auto response = collision.vertical_response(x, y);
+        if (!response.has_value()) {
+            continue;
+        }
+        const auto [correction, angle] = *response;
+        if (correction <= 0 || correction == 0x7F) {
+            continue;
+        }
+        const int candidate_surface = y - correction + 1;
+        const int distance = std::abs(candidate_surface - foot_y);
+        if (!found || distance < best_distance) {
+            found = true;
+            best_surface = candidate_surface;
+            best_distance = distance;
+            best_angle = angle;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    surface_y = best_surface;
+    surface_angle = best_angle;
+    return true;
+}
+
+bool update_ground_contact(Player& player, const CollisionMask& collision) {
+    const int foot_y = static_cast<int>(std::round(player.y() + kPlayerHalfHeight));
+    const int center_x = static_cast<int>(std::round(player.x()));
+    const int left_x = center_x - kSlopeProbeRadius;
+    const int right_x = center_x + kSlopeProbeRadius;
+
+    int center_surface = -1;
+    int left_surface = -1;
+    int right_surface = -1;
+    int center_angle = 0;
+    int left_angle = 0;
+    int right_angle = 0;
+    const bool hit_center =
+        find_floor_sample(collision, center_x, foot_y, center_surface, center_angle);
+    const bool hit_left =
+        find_floor_sample(collision, left_x, foot_y, left_surface, left_angle);
+    const bool hit_right =
+        find_floor_sample(collision, right_x, foot_y, right_surface, right_angle);
+    if (!hit_center && !hit_left && !hit_right) {
+        return false;
+    }
+
+    int surface = -1;
+    int selected_angle = 0;
+    auto consider_surface = [&](bool hit, int candidate, int angle) {
+        if (!hit) {
+            return;
+        }
+        if (surface < 0 ||
+            std::abs(candidate - foot_y) < std::abs(surface - foot_y)) {
+            surface = candidate;
+            selected_angle = angle;
+        }
+    };
+    consider_surface(hit_center, center_surface, center_angle);
+    consider_surface(hit_left, left_surface, left_angle);
+    consider_surface(hit_right, right_surface, right_angle);
+    if (surface < 0) {
+        return false;
+    }
+
+    player.y_raw = static_cast<int>(
+        (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
+    player.velocity_y = 0;
+    player.air_time = 0.0F;
+    player.ground_angle = selected_angle;
+
+    if (hit_left && hit_right) {
+        player.ground_slope =
+            static_cast<float>(right_surface - left_surface) /
+            static_cast<float>(right_x - left_x);
+    } else {
+        player.ground_slope = 0.0F;
+    }
+    return true;
+}
+
 void update_player(Player& player, const CollisionMask& collision,
                    int movement, bool jump_pressed, bool jump_held,
                    bool input_up, bool input_down) {
@@ -582,6 +816,16 @@ void update_player(Player& player, const CollisionMask& collision,
     player.input_down = input_down;
 
     if (player.grounded) {
+        const int slope_force = signed_angle_to_ground_force(player.ground_angle);
+        if (slope_force != 0) {
+            int signed_speed = ground_velocity_x(player) + slope_force;
+            signed_speed = std::clamp(signed_speed, -kGroundMaxSpeed, kGroundMaxSpeed);
+            if (signed_speed != 0) {
+                player.facing_left = signed_speed < 0;
+                player.ground_speed = std::abs(signed_speed);
+            }
+        }
+
         if (movement != 0) {
             player.walking_active = true;
             if (player.ground_speed == 0) {
@@ -619,7 +863,7 @@ void update_player(Player& player, const CollisionMask& collision,
             }
         }
         player.velocity_x = ground_velocity_x(player);
-        player.velocity_y = 0;
+        player.velocity_y = ground_velocity_y(player);
         if (player.skid_ticks > 0) {
             --player.skid_ticks;
         }
@@ -661,64 +905,20 @@ void update_player(Player& player, const CollisionMask& collision,
         static_cast<int>((kCameraMinX + kPlayerHalfWidth) * kFixedOne),
         static_cast<int>((kCameraMaxX + kLogicalWidth - kPlayerHalfWidth) * kFixedOne));
 
-    const int previous_y_raw = player.y_raw;
     player.y_raw += player.velocity_y;
-    const float player_x = player.x();
-    const float player_y = player.y();
-    const int left = static_cast<int>(std::floor(player_x - kPlayerHalfWidth));
-    const int center = static_cast<int>(std::floor(player_x));
-    const int right = static_cast<int>(std::floor(player_x + kPlayerHalfWidth));
-
-    if (player.velocity_y >= 0) {
-        const int scan_start = static_cast<int>(
-            std::floor(static_cast<float>(previous_y_raw) / kFixedOne +
-                       kPlayerHalfHeight - 2.0F));
-        const int scan_end = static_cast<int>(
-            std::ceil(player_y + kPlayerHalfHeight + 3.0F));
-        int surface = -1;
-        for (const int sensor_x : {left, center, right}) {
-            const int hit = collision.first_solid_y(
-                sensor_x, scan_start, scan_end);
-            if (hit >= 0 && (surface < 0 || hit < surface)) {
-                surface = hit;
-            }
-        }
-        if (surface >= 0) {
-            player.y_raw = static_cast<int>(
-                (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
-            player.velocity_y = 0;
-            player.facing_left = player.velocity_x < 0;
-            player.ground_speed = std::abs(player.velocity_x);
-            player.grounded = true;
-            player.walking_active = player.ground_speed != 0;
-            player.air_time = 0.0F;
-        } else {
-            player.grounded = false;
-        }
-    }
 
     if (player.grounded) {
-        int surface = -1;
-        for (const int sensor_x : {left, center, right}) {
-            const int hit = collision.first_solid_y(
-                sensor_x,
-                static_cast<int>(player.y() + kPlayerHalfHeight - 5.0F),
-                static_cast<int>(player.y() + kPlayerHalfHeight + 7.0F));
-            if (hit >= 0 && (surface < 0 || hit < surface)) {
-                surface = hit;
-            }
-        }
-        if (surface >= 0) {
-            player.y_raw = static_cast<int>(
-                (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
-            player.velocity_y = 0;
-            player.air_time = 0.0F;
-        } else {
-            player.grounded = false;
-        }
+        player.grounded = update_ground_contact(player, collision);
+    } else if (player.velocity_y >= 0 && update_ground_contact(player, collision)) {
+        player.grounded = true;
+        player.facing_left = player.velocity_x < 0;
+        player.ground_speed = std::abs(player.velocity_x);
+        player.walking_active = player.ground_speed != 0;
     }
 
     if (!player.grounded) {
+        player.ground_slope = 0.0F;
+        player.ground_angle = 0;
         player.air_time += 1.0F / 60.0F;
     }
     update_dust_puffs(player);

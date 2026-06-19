@@ -125,6 +125,14 @@ class LevelSpec:
     segments: dict[str, Segment]
 
 
+@dataclass(frozen=True)
+class CollisionDef:
+    horizontal_angle: int
+    vertical_angle: int
+    horizontal_table: tuple[int, ...]
+    vertical_table: tuple[int, ...]
+
+
 NSI1 = LevelSpec(
     key="nsi1",
     name="Neo South Island Act 1",
@@ -657,6 +665,99 @@ def render_raw_sprite_file(
     return width, height, origin_x, origin_y, rgba
 
 
+def parse_asm_int(token: str) -> int:
+    token = token.strip()
+    if token.startswith("~"):
+        value = parse_asm_int(token[1:])
+        return (~value) & 0xFF
+    negative = token.startswith("-")
+    if negative:
+        token = token[1:].strip()
+    if token.lower().endswith("h"):
+        value = int(token[:-1], 16)
+    else:
+        value = int(token, 10)
+    if negative:
+        value = -value
+    if value >= 0x80:
+        value -= 0x100
+    return value
+
+
+def parse_collision_defs(reference_directory: Path | None) -> list[CollisionDef]:
+    if reference_directory is None:
+        reference_directory = DEFAULT_REFERENCE
+    spa_asm = reference_directory / "spa.asm"
+    if not spa_asm.is_file():
+        raise FileNotFoundError(f"missing disassembly source: {spa_asm}")
+
+    lines = spa_asm.read_text(encoding="utf-8", errors="replace").splitlines()
+    tables: dict[str, list[int]] = {}
+    current_label: str | None = None
+
+    def append_db(label: str, raw_values: str) -> None:
+        raw_values = raw_values.split(";")[0]
+        for token in raw_values.split(","):
+            token = token.strip()
+            if token:
+                tables[label].append(parse_asm_int(token))
+
+    for line in lines:
+        label_match = re.match(r"(byte_[0-9A-Fa-f]+):\s*DB\s*(.*)", line)
+        if label_match:
+            current_label = label_match.group(1)
+            tables[current_label] = []
+            append_db(current_label, label_match.group(2))
+            continue
+        if current_label is not None and re.match(r"\s+DB\s+", line):
+            append_db(current_label, re.sub(r"^\s*DB\s*", "", line))
+            continue
+        if current_label is not None and line.strip().startswith(";"):
+            continue
+        current_label = None
+
+    collision_defs: list[CollisionDef] = []
+    collecting = False
+    pattern = re.compile(
+        r"CollisonDef\s+([^,]+),\s*([^,]+),\s*(byte_[0-9A-Fa-f]+),\s*(byte_[0-9A-Fa-f]+)"
+    )
+    for line in lines:
+        if "CollisionData:" in line:
+            collecting = True
+        if not collecting:
+            continue
+
+        match = pattern.search(line)
+        if match:
+            horizontal_angle = parse_asm_int(match.group(1))
+            vertical_angle = parse_asm_int(match.group(2))
+            horizontal_label = match.group(3)
+            vertical_label = match.group(4)
+            horizontal_table = tuple(tables[horizontal_label][:64])
+            vertical_table = tuple(tables[vertical_label][:64])
+            if len(horizontal_table) != 64 or len(vertical_table) != 64:
+                raise ValueError(
+                    f"collision table {horizontal_label}/{vertical_label} is not 64 bytes"
+                )
+            collision_defs.append(
+                CollisionDef(
+                    horizontal_angle,
+                    vertical_angle,
+                    horizontal_table,
+                    vertical_table,
+                )
+            )
+            continue
+        if collision_defs and line.strip().startswith("; ---"):
+            break
+
+    if len(collision_defs) < 52:
+        raise ValueError(
+            f"CollisionData yielded {len(collision_defs)} defs; expected at least 52"
+        )
+    return collision_defs
+
+
 def collision_surface(collision_type: int, x: int) -> int | None:
     if collision_type in (1, 22):
         return 0
@@ -711,6 +812,7 @@ def build_collision_mask(
     collision_data: bytes,
     width_blocks: int,
     height_blocks: int,
+    collision_defs: list[CollisionDef] | None = None,
 ) -> bytes:
     layout = unpack_words(layout_data)
     block_words = unpack_words(block_data)
@@ -729,20 +831,79 @@ def build_collision_mask(
             collision_type = collision_types[tile_id]
             if collision_type == 0xFFFF:
                 collision_type = 0
-            tile_mask = tile_masks.setdefault(
-                collision_type, collision_tile_mask(collision_type)
-            )
-            flip_y = bool(entry & 0x4000)
             flip_x = bool(entry & 0x8000)
+            if collision_defs is not None:
+                collision_def = collision_defs[collision_type * 2 + int(flip_x)]
+                vertical_table = collision_def.vertical_table
+            else:
+                tile_mask = tile_masks.setdefault(
+                    collision_type, collision_tile_mask(collision_type)
+                )
+                flip_y = bool(entry & 0x4000)
             tile_x = block_x + (position % 4) * 8
             tile_y = block_y + (position // 4) * 8
             for y in range(8):
-                source_y = 7 - y if flip_y else y
                 for x in range(8):
-                    source_x = 7 - x if flip_x else x
-                    if tile_mask[source_y][source_x]:
+                    if collision_defs is not None:
+                        # GetCollDataPtr indexes collision tables with
+                        #   row = 7 - (ROM bottom-up Y & 7)
+                        # The viewer/extractor use top-down stage Y, and NSI's
+                        # stage height is an exact multiple of 8, so that row
+                        # maps directly to the top-down local Y.
+                        table_index = y * 8 + (7 - x)
+                        response = vertical_table[table_index]
+                        solid = response != 0 and response != 0x7F
+                    else:
+                        source_y = 7 - y if flip_y else y
+                        source_x = 7 - x if flip_x else x
+                        solid = tile_mask[source_y][source_x]
+                    if solid:
                         mask[(tile_y + y) * width + tile_x + x] = 255
     return bytes(mask)
+
+
+def build_collision_angle_map(
+    layout_data: bytes,
+    block_data: bytes,
+    collision_data: bytes,
+    width_blocks: int,
+    height_blocks: int,
+    collision_defs: list[CollisionDef],
+) -> bytes:
+    layout = unpack_words(layout_data)
+    block_words = unpack_words(block_data)
+    collision_types = unpack_words(collision_data)
+    width_tiles = width_blocks * 4
+    height_tiles = height_blocks * 4
+    angles = bytearray(width_tiles * height_tiles)
+
+    for index, block_id in enumerate(layout):
+        entries = block_words[block_id * 16 : block_id * 16 + 16]
+        block_tile_x = (index % width_blocks) * 4
+        block_tile_y = (index // width_blocks) * 4
+        for position, entry in enumerate(entries):
+            tile_id = entry & 0x01FF
+            collision_type = collision_types[tile_id]
+            if collision_type == 0xFFFF:
+                collision_type = 0
+            flip_x = bool(entry & 0x8000)
+            collision_def = collision_defs[collision_type * 2 + int(flip_x)]
+            tile_x = block_tile_x + (position % 4)
+            tile_y = block_tile_y + (position // 4)
+            angles[tile_y * width_tiles + tile_x] = (
+                collision_def.vertical_angle & 0xFF
+            )
+    return bytes(angles)
+
+
+def encode_collision_defs(collision_defs: list[CollisionDef]) -> bytes:
+    encoded = bytearray()
+    for collision_def in collision_defs:
+        encoded.append(collision_def.horizontal_angle & 0xFF)
+        encoded.append(collision_def.vertical_angle & 0xFF)
+        encoded.extend(value & 0xFF for value in collision_def.horizontal_table)
+        encoded.extend(value & 0xFF for value in collision_def.vertical_table)
+    return bytes(encoded)
 
 
 def validate_reference(
@@ -848,14 +1009,26 @@ def extract(
         composite_rgb(plane2_composited, plane1, plane1_mask),
     )
     write_png(output / "collision.png", width, height, collision)
+    collision_defs = parse_collision_defs(reference or DEFAULT_REFERENCE)
+    (output / "collision-defs.bin").write_bytes(encode_collision_defs(collision_defs))
     collision_mask = build_collision_mask(
         segments["plane2"],
         segments["blocks"],
         segments["collision"],
         spec.width_blocks,
         spec.height_blocks,
+        collision_defs,
     )
     (output / "collision-mask.bin").write_bytes(collision_mask)
+    collision_angle_y = build_collision_angle_map(
+        segments["plane2"],
+        segments["blocks"],
+        segments["collision"],
+        spec.width_blocks,
+        spec.height_blocks,
+        collision_defs,
+    )
+    (output / "collision-angle-y.bin").write_bytes(collision_angle_y)
 
     sprite_tiles = rom[
         SPRITE_TILES_OFFSET : SPRITE_TILES_OFFSET + SPRITE_TILES_SIZE
@@ -1019,6 +1192,18 @@ def extract(
             "output": "collision-mask.bin",
             "size": [width, height],
             "solid_bytes": sum(1 for value in collision_mask if value),
+            "source": "ROM CollisionData vertical response tables",
+        },
+        "collision_angle_y": {
+            "output": "collision-angle-y.bin",
+            "size_tiles": [spec.width_blocks * 4, spec.height_blocks * 4],
+            "source": "ROM CollisionData vertical angle byte",
+        },
+        "collision_defs": {
+            "output": "collision-defs.bin",
+            "entry_size": 130,
+            "count": len(collision_defs),
+            "source": "ROM CollisionData angle bytes and response tables",
         },
         "reference_validation": validate_reference(segments, spec, reference),
     }
