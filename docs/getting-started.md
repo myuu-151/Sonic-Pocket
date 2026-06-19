@@ -54,6 +54,13 @@ Generated listings go under `out/` and are intentionally ignored. Commit only
 human-authored symbols, notes, and clean-room source—not ROMs or bulk generated
 assembly.
 
+After updating `analysis/symbols.csv`, close the Ghidra GUI and apply the names
+to the local project with:
+
+```powershell
+.\scripts\apply-ghidra-symbols.ps1
+```
+
 ## First analysis targets
 
 1. Confirm startup and work-RAM initialization from `0x200040`.

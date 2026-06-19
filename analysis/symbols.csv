@@ -1,8 +1,10 @@
 address,name,confidence,notes
 0x200040,rom_entry,confirmed,Entry point stored in the cartridge header
 0x20009C,bios_resume_jump,probable,Direct jump to BIOS address 0xFF1800
-0x2000A0,interrupt_handler_2000A0,confirmed,Saves registers and terminates with RETI
+0x2000A0,vblank_handler,confirmed,Installed in the Vertical_Blanking_Int vector at RAM 0x6FCC
 0x20010D,wait_for_counter_400A,probable,Wait loop involving RAM byte 0x400A
 0x200124,startup_sequence,probable,Calls a series of initialization routines
 0x20018D,frame_callback_20018D,unknown,Callback-like block reached from startup control flow
 0x20024E,initial_ram_table,probable,Copied to RAM at 0x6FB8 during startup
+0x3A59C4,vblank_restart_timer0_if_enabled,probable,Restarts TLCS-900H Timer 0 when the flag at 0x6E68 is nonzero
+0x006E68,timer0_restart_enabled,probable,Controls the Timer 0 restart performed during VBlank
