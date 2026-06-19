@@ -2100,8 +2100,10 @@ void update_player(Player& player, const CollisionMask& collision,
     bool started_jump_this_tick = false;
     if (player.pending_jump && player.grounded) {
         player.pending_jump = false;
-        player.velocity_y = -kJumpImpulse;
-        player.velocity_x = ground_velocity_x(player);
+        const auto [jump_impulse_x, rom_jump_impulse_y] =
+            rom_do_sine_lookup((player.ground_angle + 0x40) & 0xFF, kJumpImpulse);
+        player.velocity_x += jump_impulse_x;
+        player.velocity_y -= rom_jump_impulse_y;
         if (player.body_half_height != 10) {
             player.body_half_height = 10;
             player.y_raw += 3 * kFixedOne;

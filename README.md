@@ -42,3 +42,23 @@ integer-scaled viewport with controllable Sonic movement; see
 This repository does not contain the original ROM, extracted game assets,
 Neo Geo Pocket Color BIOS, emulator installations, or generated full-ROM
 disassemblies. Contributors must provide their own legally obtained game data.
+
+## Porting policy
+
+This project is a native port/reimplementation, not a level-specific remake.
+Gameplay fixes should be made by porting shared ROM routines and validating
+them against traces, disassembly, and analysis tools. Do not fix individual
+ramps, slopes, objects, or screens with one-off coordinate hacks unless the ROM
+itself contains an equivalent special case.
+
+Preferred evidence sources:
+
+- the checked-in human notes under `analysis/` and `docs/`;
+- the local SPA disassembly/tools bundle, if present at
+  `SonicPocketAdventure_disasm+tools/`;
+- Ghidra with the TLCS-900/H processor and Neo Geo Pocket loader;
+- BizHawk runtime traces from `scripts/bizhawk-player-trace.lua`;
+- native replay output from the viewer's `--replay-trace` mode.
+
+When behavior differs from the ROM, identify the original routine first, port
+the general rule, then prove the change with a trace or focused runtime test.

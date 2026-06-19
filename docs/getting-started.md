@@ -56,6 +56,30 @@ The loader applies the cartridge mapping and labels known BIOS functions and
 I/O ports. The processor module provides both disassembly and developing p-code
 semantics, which is considerably more useful than a flat assembly listing.
 
+## Porting workflow
+
+Native gameplay work should be treated as routine-by-routine porting. If the
+viewer differs from the reference game, first find the relevant ROM routine in
+the disassembly or Ghidra project, then port the shared behavior into C++ and
+validate it against a runtime trace. Avoid per-level fixes such as hard-coded
+coordinates for one ramp or one collision tile; those hide the real missing ROM
+rule and usually break the next slope.
+
+Use the available tools together:
+
+- `SonicPocketAdventure_disasm+tools/disassembly/spa.asm` for named routines
+  and labels from the public SPA disassembly bundle;
+- `SonicPocketAdventure_disasm+tools/other-material/RAMOffsets.txt` for RAM
+  field names and player/object structure hints;
+- Ghidra for cross-references, local labels, decompiler sanity checks, and
+  listing exports;
+- BizHawk Lua traces for observed runtime fields;
+- `sonic-pocket-viewer.exe --replay-trace` for native-vs-ROM regression checks.
+
+Ghidra's generated C is analysis evidence, not source to paste into the port.
+The implementation should remain maintainable native C++ while preserving the
+ROM routine's state, order, and fixed-point behavior.
+
 The pinned Windows toolchain is recorded in `config/toolchain.json`. A local
 portable installation belongs under the ignored `Tools/` directory and can be
 started with:
