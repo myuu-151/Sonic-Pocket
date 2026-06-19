@@ -703,7 +703,8 @@ int main(int argc, char* argv[]) {
     bool jump_pressed = false;
     Uint64 previous_ticks = SDL_GetTicks();
     float simulation_accumulator = 0.0F;
-    constexpr float kFixedFrameSeconds = 1.0F / 60.0F;
+    constexpr float kFixedFrameSeconds = 1.0F / 30.0F;
+    constexpr float kAnimationTickSeconds = 1.0F / 60.0F;
 
     while (running) {
         SDL_Event event{};
@@ -797,7 +798,7 @@ int main(int argc, char* argv[]) {
                 jump_pressed,
                 jump_held);
             jump_pressed = false;
-            update_animation(player, sonic_animations, kFixedFrameSeconds);
+            update_animation(player, sonic_animations, kAnimationTickSeconds);
             simulation_accumulator -= kFixedFrameSeconds;
             ++simulation_steps;
         }
