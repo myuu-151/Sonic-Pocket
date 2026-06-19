@@ -847,10 +847,10 @@ bool update_ground_contact(Player& player, const CollisionMask& collision) {
         choose_bg_coll_chk3_pair(collision, center_x, rom_ceiling_probe_y, kRomGroundScanLength);
 
     RomCollisionHit selected = floor_hit;
-    if (!selected.hit) {
+    if (!selected.hit || (ceiling_hit.hit && std::abs(ceiling_hit.delta_y) < std::abs(selected.delta_y))) {
         selected = ceiling_hit;
     }
-    if (!selected.hit) {
+    if (!selected.hit || selected.delta_y == 0) {
         return false;
     }
 
