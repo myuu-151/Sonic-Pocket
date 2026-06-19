@@ -30,6 +30,7 @@ constexpr int kFixedOne = 0x100;
 constexpr int kGroundAcceleration = 0x20;
 constexpr int kGroundFriction = 0x20;
 constexpr int kGroundMaxSpeed = 0x800;
+constexpr int kPeeloutSpeed = kGroundMaxSpeed;
 constexpr int kAirAcceleration = 0x10;
 constexpr int kAirMaxXSpeed = 0x800;
 constexpr int kGravity = 0x80;
@@ -77,6 +78,7 @@ struct SonicAnimations {
     AnimationSequence idle;
     AnimationSequence walk;
     AnimationSequence run;
+    AnimationSequence peelout;
     AnimationSequence skid;
     AnimationSequence jump;
     AnimationSequence fall;
@@ -90,6 +92,7 @@ enum class AnimationState {
     Idle,
     Walk,
     Run,
+    Peelout,
     Skid,
     Jump,
     Fall,
@@ -349,6 +352,8 @@ std::string_view animation_state_name(AnimationState state) {
             return "walk";
         case AnimationState::Run:
             return "run";
+        case AnimationState::Peelout:
+            return "peelout";
         case AnimationState::Skid:
             return "skid";
         case AnimationState::Jump:
@@ -384,9 +389,11 @@ AnimationState choose_animation_state(const Player& player) {
     }
     if (std::abs(player.ground_speed) > 0 ||
         std::abs(player.velocity_x) > 0) {
-        return std::abs(player.ground_speed) >= 0x800
-            ? AnimationState::Run
-            : AnimationState::Walk;
+        const int speed = std::abs(player.ground_speed);
+        if (speed >= kPeeloutSpeed) {
+            return AnimationState::Peelout;
+        }
+        return speed >= 0x300 ? AnimationState::Run : AnimationState::Walk;
     }
     return AnimationState::Idle;
 }
@@ -400,6 +407,8 @@ const AnimationSequence& animation_sequence(
             return animations.walk;
         case AnimationState::Run:
             return animations.run;
+        case AnimationState::Peelout:
+            return animations.peelout;
         case AnimationState::Skid:
             return animations.skid;
         case AnimationState::Jump:
@@ -590,6 +599,7 @@ void update_player(Player& player, const CollisionMask& collision,
         if (surface >= 0) {
             player.y_raw = static_cast<int>(
                 (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
+            player.velocity_y = 0;
             player.air_time = 0.0F;
         } else {
             player.grounded = false;
@@ -748,6 +758,11 @@ int main(int argc, char* argv[]) {
             app.renderer,
             data_directory,
             "run",
+            {2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F}),
+        load_animation_sequence(
+            app.renderer,
+            data_directory,
+            "peelout",
             {1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F}),
         load_animation_sequence(app.renderer, data_directory, "skid", {20.0F, 3.0F}),
         load_animation_sequence(
@@ -770,6 +785,7 @@ int main(int argc, char* argv[]) {
         !animation_sequence_loaded(sonic_animations.idle) ||
         !animation_sequence_loaded(sonic_animations.walk) ||
         !animation_sequence_loaded(sonic_animations.run) ||
+        !animation_sequence_loaded(sonic_animations.peelout) ||
         !animation_sequence_loaded(sonic_animations.skid) ||
         !animation_sequence_loaded(sonic_animations.jump) ||
         !animation_sequence_loaded(sonic_animations.fall) ||
