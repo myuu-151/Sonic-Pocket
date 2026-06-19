@@ -20,7 +20,7 @@ integrators at `0x291606` and `0x291613`:
 | `+0x1A` | `0x6722` | 2 | `x_velocity` | Signed 8.8 horizontal velocity. |
 | `+0x1C` | `0x6724` | 2 | `y_velocity` | Signed 8.8 vertical velocity. |
 | `+0x36` | `0x673E` | 1 | `collision_radius_x` | Horizontal sensor radius; initialized to 7. |
-| `+0x37` | `0x673F` | 1 | `collision_radius_y` | Vertical sensor radius; 13 standing and 10 rolling. |
+| `+0x37` | `0x673F` | 1 | `collision_radius_y` | Vertical sensor radius; 13 standing and 10 crouching or rolling. |
 
 `velocity_from_angle_and_speed` at `0x291494` indexes two signed lookup tables
 with `surface_angle`, multiplies both components by `ground_speed`, and returns
@@ -45,6 +45,12 @@ The standing state demonstrates the input mapping directly:
 `0x399EF2`. The walking state applies ground acceleration, converts ground
 speed through the angle table, performs collision/attachment work, updates
 animation, and returns to standing when speed and input conditions permit.
+
+Runtime capture confirms `player_enter_crouch` at `0x399AF3` and
+`player_state_crouch` at `0x399B19`. Entering crouch changes the task flags
+from `0x01` to `0x05`, changes the vertical radius from 13 to 10, and shifts
+integer Y by three pixels. Releasing Down returns to idle and restores the
+standing bounds.
 
 ## Jump transition
 
@@ -83,11 +89,33 @@ entering `player_state_roll` at `0x399F48`. The shape transition is explicit:
 - Standing uses radii 7 by 13.
 - Rolling uses radii 7 by 10 and shifts the integer Y position by three pixels
   to keep the contact point stable.
-- Task flag `+0x0B` bit 2 records the rolling collision mode.
+- Task flag `+0x0B` bit 2 records the compact crouching/rolling collision mode.
 
 The rolling state applies lower-friction ground physics, resolves surface
 collision, permits jumping, and returns to idle when speed drops below the
 exit threshold.
+
+## Runtime-confirmed flags and cadence
+
+The first BizHawk 2.10 player trace contains 1,027 video frames. Every one of
+the 513 even-to-odd frame pairs has identical player state. Movement advances
+only on the next even frame, establishing a 30 Hz player gameplay tick over
+the roughly 60 Hz video output for this scene.
+
+The same trace confirms two task flag bits at offset `+0x0B`:
+
+- Bit 1 (`0x02`) is the airborne flag. It appears when
+  `player_enter_airborne` at `0x39AAC6` advances to the common airborne state.
+- Bit 2 (`0x04`) selects the compact 7 by 10 collision bounds used while
+  crouching, charging a spindash, rolling, and during a rolling airborne arc.
+
+`surface_angle` uses a full 256-unit turn. Zero is level rightward movement;
+angle `0x0A` produced positive X and Y velocity on an ascending slope, while
+`0x40` produced vertical movement at the end of the captured rolling path.
+Once airborne, `relax_airborne_surface_angle` at `0x39ABCA` moved the angle
+`0x40`, `0x3C`, `0x38`, and so on toward zero by four units per gameplay tick.
+
+See [runtime-trace-001.md](runtime-trace-001.md) for the captured checkpoints.
 
 ## Collision overview
 
@@ -98,8 +126,7 @@ sensor pipeline and scratch layout are recorded in [collision.md](collision.md).
 
 ## Still to map
 
-The next player pass should assign names to the hurt, death, and spring states,
-then finish the exact meanings of the remaining movement flag bits. Task flag
-`+0x0B` bit 1 is strongly associated with airborne movement, while movement
-flag `+0x14` bit 7 controls facing and horizontal mirroring; runtime traces are
-still needed before marking every use as confirmed.
+The next player pass should capture a normal standing jump, then assign names
+to the hurt, death, and spring states and finish the remaining movement flag
+bits. Movement flag `+0x14` bit 7 controls facing and horizontal mirroring;
+another directed trace will establish its exact polarity.

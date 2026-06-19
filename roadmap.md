@@ -95,7 +95,8 @@ state for regression testing.
 
 ## 5. Implement the native engine
 
-- [ ] Implement a fixed 60 Hz deterministic simulation.
+- [ ] Implement 60 Hz presentation with the observed deterministic 30 Hz
+      player gameplay tick; verify cadence for other subsystems.
 - [ ] Reimplement object scheduling and state.
 - [ ] Reimplement player physics and collision.
 - [ ] Reimplement the camera, stage loading, and level events.
@@ -149,6 +150,8 @@ reference result.
 
 ## Current focus
 
-The project is currently in phase 2: mapping the original game. The immediate
-target is to establish the Ghidra/MAME analysis environment, trace startup and
-VBlank, and identify input polling plus the main frame loop.
+The project is currently in phase 2: mapping the original game. Startup,
+VBlank, input polling, task scheduling, core player movement, spindash, roll,
+and the first collision pass are mapped. The immediate target is a directed
+standing-jump trace followed by hurt, death, spring, camera, and stage-object
+state mapping.

@@ -26,17 +26,22 @@ address,name,kind,confidence,notes
 0x291613,integrate_object_x_position,function,confirmed,Adds signed 8.8 X velocity at offset 0x1A to the 24-bit X position
 0x399697,player_try_jump,function,confirmed,Tests newly pressed A or B and requests the jump state
 0x399740,player_task_init,function,confirmed,Initializes the player task and its state machine at RAM 0x6708
-0x3999F7,player_enter_idle,function,probable,Clears player velocity and enters the standing state
+0x3999F7,player_enter_idle,function,confirmed,Clears player velocity and enters the standing state
 0x399A2B,player_state_idle,function,confirmed,Handles standing look crouch and transition to movement from controller input
+0x399AF3,player_enter_crouch,function,confirmed,Selects the crouching animation and compact collision bounds then enters the crouch state
+0x399B19,player_state_crouch,function,confirmed,Holds crouch while Down remains pressed and accepts A or B to start a spindash
 0x399B5E,update_spindash_charge,function,confirmed,Decays the stored charge and adds 0x200 for each new A or B press up to 0x800
 0x399B98,player_enter_spindash_charge,function,confirmed,Starts the spindash sound and animation then clears the stored charge
 0x399BB7,player_state_spindash_charge,function,confirmed,Charges while Down is held and converts charge through a speed table on release
-0x399EE5,player_enter_walk,function,probable,Initializes the walking state and animation
-0x399EF2,player_state_walk,function,probable,Applies ground acceleration collision and animation while moving
+0x399EE5,player_enter_walk,function,confirmed,Initializes the walking state and animation
+0x399EF2,player_state_walk,function,confirmed,Applies ground acceleration collision and animation while moving
 0x399F3B,player_enter_roll,function,confirmed,Selects the shorter rolling collision bounds and enters rolling movement
-0x399F48,player_state_roll,function,probable,Applies rolling ground physics collision jump checks and exit at low speed
+0x399F48,player_state_roll,function,confirmed,Applies rolling ground physics collision jump checks and exit at low speed
 0x39AA86,player_enter_jump,function,confirmed,Applies jump velocity along the surface normal and enters airborne movement
-0x39AAF7,player_state_airborne,function,probable,Applies airborne movement gravity collision and animation
+0x39AABA,set_player_airborne_flags,function,confirmed,Sets task flag bit 1 clears bit 7 and detaches the player from the supporting object
+0x39AAC6,player_enter_airborne,function,confirmed,Applies airborne flags and changes the task function to the common airborne state
+0x39AAF7,player_state_airborne,function,confirmed,Applies airborne movement gravity collision and animation
+0x39ABCA,relax_airborne_surface_angle,function,confirmed,Rotates the stored surface angle four units per gameplay tick back toward zero
 0x39B4C8,load_collision_radii,function,confirmed,Copies object horizontal and vertical collision radii into shared collision scratch values
 0x39B508,resolve_ground_surface_collision,function,probable,Probes around the current surface quadrant and snaps the player to the selected ground wall or ceiling
 0x39B83E,check_ground_attachment,function,probable,Uses paired surface sensors to update angle and reports when the player has lost contact

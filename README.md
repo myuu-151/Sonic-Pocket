@@ -7,7 +7,9 @@ Adventure*.
 
 The reference ROM, startup, VBlank, controller polling, cooperative task
 scheduler, front-end flow, and first gameplay task chain are mapped. Sonic's
-player task at RAM `0x6708` now has confirmed position and velocity fields.
+player task at RAM `0x6708` now has confirmed position, velocity, collision
+bounds, crouch, spindash, roll, and airborne fields and states. A BizHawk trace
+also confirms a 30 Hz player gameplay tick over 60 Hz presentation.
 
 The current milestone is to finish the player state machine and collision
 model, then translate one representative stage into native code.
