@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -14,15 +17,18 @@ constexpr int kLogicalHeight = 152;
 constexpr int kDefaultWindowScale = 3;
 constexpr int kStageWidth = 6400;
 constexpr int kStageHeight = 992;
-constexpr float kStageGuardBand = 64.0F;
 constexpr float kCameraMinX = 64.0F;
 constexpr float kCameraMinY = 64.0F;
 constexpr float kCameraMaxX = static_cast<float>(kStageWidth - 224);
 constexpr float kCameraMaxY = static_cast<float>(kStageHeight - 216);
 constexpr float kPlayerStartX = 112.0F;
-constexpr float kPlayerStartY = 424.0F;
-constexpr float kCameraSpeed = 180.0F;
-constexpr float kFastCameraSpeed = 480.0F;
+constexpr float kPlayerHalfWidth = 6.0F;
+constexpr float kPlayerHalfHeight = 13.0F;
+constexpr float kAcceleration = 520.0F;
+constexpr float kDeceleration = 700.0F;
+constexpr float kMaxRunSpeed = 115.0F;
+constexpr float kGravity = 520.0F;
+constexpr float kJumpSpeed = 230.0F;
 constexpr Sint16 kGamepadDeadzone = 8000;
 
 struct Texture {
@@ -54,6 +60,37 @@ struct Application {
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
+    }
+};
+
+struct Player {
+    float x = kPlayerStartX;
+    float y = 0.0F;
+    float velocity_x = 0.0F;
+    float velocity_y = 0.0F;
+    bool grounded = false;
+    bool facing_left = false;
+};
+
+struct CollisionMask {
+    std::vector<unsigned char> pixels;
+
+    bool solid(int x, int y) const {
+        if (x < 0 || x >= kStageWidth || y < 0 || y >= kStageHeight) {
+            return true;
+        }
+        return pixels[static_cast<std::size_t>(y) * kStageWidth + x] != 0;
+    }
+
+    int first_solid_y(int x, int start_y, int end_y) const {
+        start_y = std::clamp(start_y, 0, kStageHeight - 1);
+        end_y = std::clamp(end_y, 0, kStageHeight - 1);
+        for (int y = start_y; y <= end_y; ++y) {
+            if (solid(x, y)) {
+                return y;
+            }
+        }
+        return -1;
     }
 };
 
@@ -89,6 +126,26 @@ Texture load_png(SDL_Renderer* renderer, const std::filesystem::path& path,
     return texture;
 }
 
+CollisionMask load_collision_mask(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        std::cerr << "Unable to load " << path << '\n';
+        return {};
+    }
+    CollisionMask result;
+    result.pixels.assign(
+        std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>());
+    const auto expected =
+        static_cast<std::size_t>(kStageWidth) * kStageHeight;
+    if (result.pixels.size() != expected) {
+        std::cerr << "Collision mask has " << result.pixels.size()
+                  << " bytes; expected " << expected << '\n';
+        result.pixels.clear();
+    }
+    return result;
+}
+
 std::filesystem::path find_data_directory(
     const std::filesystem::path& requested,
     const std::filesystem::path& executable) {
@@ -112,13 +169,13 @@ std::filesystem::path find_data_directory(
     return current;
 }
 
-void center_camera(float& camera_x, float& camera_y) {
+void center_camera(float& camera_x, float& camera_y, const Player& player) {
     camera_x = std::clamp(
-        kPlayerStartX - static_cast<float>(kLogicalWidth) / 2.0F,
+        player.x - 48.0F,
         kCameraMinX,
         kCameraMaxX);
     camera_y = std::clamp(
-        kPlayerStartY - static_cast<float>(kLogicalHeight) / 2.0F,
+        player.y - 76.0F,
         kCameraMinY,
         kCameraMaxY);
 }
@@ -162,28 +219,114 @@ void open_first_gamepad(Application& app) {
     SDL_free(gamepads);
 }
 
-void draw_player_marker(SDL_Renderer* renderer, float x, float y) {
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 220);
-    SDL_FRect shadow{x - 4.0F, y - 7.0F, 9.0F, 14.0F};
-    SDL_RenderFillRect(renderer, &shadow);
+float approach(float value, float target, float amount) {
+    if (value < target) {
+        return std::min(value + amount, target);
+    }
+    return std::max(value - amount, target);
+}
 
-    SDL_SetRenderDrawColor(renderer, 35, 95, 255, 255);
-    SDL_FRect body{x - 3.0F, y - 6.0F, 7.0F, 11.0F};
-    SDL_RenderFillRect(renderer, &body);
+void reset_player(Player& player, const CollisionMask& collision) {
+    player = {};
+    const int surface = collision.first_solid_y(
+        static_cast<int>(kPlayerStartX), 0, kStageHeight - 1);
+    player.y =
+        static_cast<float>(surface >= 0 ? surface : 568) - kPlayerHalfHeight;
+    player.grounded = true;
+}
 
-    SDL_SetRenderDrawColor(renderer, 255, 235, 40, 255);
-    SDL_RenderLine(renderer, x - 5.0F, y, x + 5.0F, y);
-    SDL_RenderLine(renderer, x, y - 8.0F, x, y + 8.0F);
+void update_player(Player& player, const CollisionMask& collision,
+                   float movement, bool jump_pressed, float delta_seconds) {
+    if (movement != 0.0F) {
+        player.velocity_x += movement * kAcceleration * delta_seconds;
+        player.velocity_x =
+            std::clamp(player.velocity_x, -kMaxRunSpeed, kMaxRunSpeed);
+        player.facing_left = movement < 0.0F;
+    } else {
+        player.velocity_x = approach(
+            player.velocity_x, 0.0F, kDeceleration * delta_seconds);
+    }
+
+    if (jump_pressed && player.grounded) {
+        player.velocity_y = -kJumpSpeed;
+        player.grounded = false;
+    }
+
+    player.velocity_y += kGravity * delta_seconds;
+    player.x += player.velocity_x * delta_seconds;
+    player.x = std::clamp(
+        player.x,
+        kCameraMinX + kPlayerHalfWidth,
+        kCameraMaxX + kLogicalWidth - kPlayerHalfWidth);
+
+    const float previous_y = player.y;
+    player.y += player.velocity_y * delta_seconds;
+    const int left = static_cast<int>(std::floor(player.x - kPlayerHalfWidth));
+    const int center = static_cast<int>(std::floor(player.x));
+    const int right = static_cast<int>(std::floor(player.x + kPlayerHalfWidth));
+
+    if (player.velocity_y >= 0.0F) {
+        const int scan_start = static_cast<int>(
+            std::floor(previous_y + kPlayerHalfHeight - 2.0F));
+        const int scan_end = static_cast<int>(
+            std::ceil(player.y + kPlayerHalfHeight + 3.0F));
+        int surface = -1;
+        for (const int sensor_x : {left, center, right}) {
+            const int hit = collision.first_solid_y(
+                sensor_x, scan_start, scan_end);
+            if (hit >= 0 && (surface < 0 || hit < surface)) {
+                surface = hit;
+            }
+        }
+        if (surface >= 0) {
+            player.y = static_cast<float>(surface) - kPlayerHalfHeight;
+            player.velocity_y = 0.0F;
+            player.grounded = true;
+        } else {
+            player.grounded = false;
+        }
+    }
+
+    if (player.grounded) {
+        int surface = -1;
+        for (const int sensor_x : {left, center, right}) {
+            const int hit = collision.first_solid_y(
+                sensor_x,
+                static_cast<int>(player.y + kPlayerHalfHeight - 5.0F),
+                static_cast<int>(player.y + kPlayerHalfHeight + 7.0F));
+            if (hit >= 0 && (surface < 0 || hit < surface)) {
+                surface = hit;
+            }
+        }
+        if (surface >= 0) {
+            player.y = static_cast<float>(surface) - kPlayerHalfHeight;
+        } else {
+            player.grounded = false;
+        }
+    }
+}
+
+void update_camera(float& camera_x, float& camera_y, const Player& player,
+                   float delta_seconds) {
+    const float target_x = std::clamp(
+        player.x - (player.facing_left ? 112.0F : 48.0F),
+        kCameraMinX,
+        kCameraMaxX);
+    const float target_y = std::clamp(
+        player.y - 76.0F, kCameraMinY, kCameraMaxY);
+    camera_x = approach(camera_x, target_x, 150.0F * delta_seconds);
+    camera_y = approach(camera_y, target_y, 150.0F * delta_seconds);
 }
 
 bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
+                  SDL_Texture* sonic, const Player& player,
                   float camera_x, float camera_y, bool show_collision) {
     SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
     SDL_RenderClear(app.renderer);
 
     SDL_FRect source{
-        std::floor(camera_x + kStageGuardBand),
-        std::floor(camera_y + kStageGuardBand),
+        std::floor(camera_x),
+        std::floor(camera_y),
         static_cast<float>(kLogicalWidth),
         static_cast<float>(kLogicalHeight),
     };
@@ -198,10 +341,22 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
         }
     }
 
-    draw_player_marker(
-        app.renderer,
-        kPlayerStartX - camera_x,
-        kPlayerStartY - camera_y);
+    SDL_FRect sonic_destination{
+        std::floor(player.x - camera_x - 9.0F),
+        std::floor(player.y - camera_y - 15.0F),
+        18.0F,
+        30.0F,
+    };
+    if (!SDL_RenderTextureRotated(
+            app.renderer,
+            sonic,
+            nullptr,
+            &sonic_destination,
+            0.0,
+            nullptr,
+            player.facing_left ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE)) {
+        return fail("Unable to render Sonic");
+    }
 
     SDL_RenderPresent(app.renderer);
     return true;
@@ -228,8 +383,12 @@ int main(int argc, char* argv[]) {
         find_data_directory(requested_data, argc > 0 ? argv[0] : "");
     const auto stage_path = data_directory / "stage.png";
     const auto collision_path = data_directory / "collision.png";
+    const auto collision_mask_path = data_directory / "collision-mask.bin";
+    const auto sonic_path = data_directory / "sonic-idle.png";
     if (!std::filesystem::is_regular_file(stage_path) ||
-        !std::filesystem::is_regular_file(collision_path)) {
+        !std::filesystem::is_regular_file(collision_path) ||
+        !std::filesystem::is_regular_file(collision_mask_path) ||
+        !std::filesystem::is_regular_file(sonic_path)) {
         std::cerr << "Missing extracted stage data in " << data_directory << '\n'
                   << "Run: py -3 tools/extract_level.py\n";
         return 2;
@@ -265,17 +424,23 @@ int main(int argc, char* argv[]) {
 
     Texture stage = load_png(app.renderer, stage_path);
     Texture collision = load_png(app.renderer, collision_path, true);
-    if (stage.value == nullptr || collision.value == nullptr) {
+    Texture sonic = load_png(app.renderer, sonic_path);
+    CollisionMask collision_mask = load_collision_mask(collision_mask_path);
+    if (stage.value == nullptr || collision.value == nullptr ||
+        sonic.value == nullptr || collision_mask.pixels.empty()) {
         return 1;
     }
 
+    Player player;
+    reset_player(player, collision_mask);
     float camera_x = 0.0F;
     float camera_y = 0.0F;
-    center_camera(camera_x, camera_y);
+    center_camera(camera_x, camera_y, player);
 
     if (smoke_test) {
         if (!render_frame(
-                app, stage.value, collision.value, camera_x, camera_y, true)) {
+                app, stage.value, collision.value, sonic.value, player,
+                camera_x, camera_y, true)) {
             return 1;
         }
         std::cout << "Viewer smoke test passed using " << data_directory << '\n';
@@ -285,6 +450,7 @@ int main(int argc, char* argv[]) {
     open_first_gamepad(app);
     bool running = true;
     bool show_collision = false;
+    bool jump_pressed = false;
     Uint64 previous_ticks = SDL_GetTicks();
 
     while (running) {
@@ -304,7 +470,11 @@ int main(int argc, char* argv[]) {
                         show_collision = !show_collision;
                     } else if (event.key.key == SDLK_R ||
                                event.key.key == SDLK_HOME) {
-                        center_camera(camera_x, camera_y);
+                        reset_player(player, collision_mask);
+                        center_camera(camera_x, camera_y, player);
+                    } else if (event.key.key == SDLK_SPACE ||
+                               event.key.key == SDLK_Z) {
+                        jump_pressed = true;
                     } else if (event.key.key >= SDLK_1 &&
                                event.key.key <= SDLK_6) {
                         if (!set_window_scale(
@@ -326,9 +496,12 @@ int main(int argc, char* argv[]) {
                     break;
                 case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
                     if (event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) {
+                        jump_pressed = true;
+                    } else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) {
                         show_collision = !show_collision;
                     } else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
-                        center_camera(camera_x, camera_y);
+                        reset_player(player, collision_mask);
+                        center_camera(camera_x, camera_y, player);
                     }
                     break;
                 default:
@@ -344,43 +517,31 @@ int main(int argc, char* argv[]) {
 
         const bool* keyboard = SDL_GetKeyboardState(nullptr);
         float movement_x = 0.0F;
-        float movement_y = 0.0F;
         movement_x += keyboard[SDL_SCANCODE_RIGHT] || keyboard[SDL_SCANCODE_D];
         movement_x -= keyboard[SDL_SCANCODE_LEFT] || keyboard[SDL_SCANCODE_A];
-        movement_y += keyboard[SDL_SCANCODE_DOWN] || keyboard[SDL_SCANCODE_S];
-        movement_y -= keyboard[SDL_SCANCODE_UP] || keyboard[SDL_SCANCODE_W];
 
         if (app.gamepad != nullptr) {
             movement_x += normalized_axis(SDL_GetGamepadAxis(
                 app.gamepad, SDL_GAMEPAD_AXIS_LEFTX));
-            movement_y += normalized_axis(SDL_GetGamepadAxis(
-                app.gamepad, SDL_GAMEPAD_AXIS_LEFTY));
             movement_x += SDL_GetGamepadButton(
                 app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
             movement_x -= SDL_GetGamepadButton(
                 app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
-            movement_y += SDL_GetGamepadButton(
-                app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
-            movement_y -= SDL_GetGamepadButton(
-                app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP);
         }
 
-        const bool fast =
-            keyboard[SDL_SCANCODE_LSHIFT] || keyboard[SDL_SCANCODE_RSHIFT];
-        const float speed = fast ? kFastCameraSpeed : kCameraSpeed;
-        camera_x = std::clamp(
-            camera_x + movement_x * speed * delta_seconds,
-            kCameraMinX,
-            kCameraMaxX);
-        camera_y = std::clamp(
-            camera_y + movement_y * speed * delta_seconds,
-            kCameraMinY,
-            kCameraMaxY);
+        update_player(
+            player, collision_mask,
+            std::clamp(movement_x, -1.0F, 1.0F),
+            jump_pressed, delta_seconds);
+        jump_pressed = false;
+        update_camera(camera_x, camera_y, player, delta_seconds);
 
         const std::string title =
             "Sonic Pocket - Camera " +
             std::to_string(static_cast<int>(camera_x)) + ", " +
-            std::to_string(static_cast<int>(camera_y)) +
+            std::to_string(static_cast<int>(camera_y)) + " - Sonic " +
+            std::to_string(static_cast<int>(player.x)) + ", " +
+            std::to_string(static_cast<int>(player.y)) +
             (show_collision ? " - Collision ON" : "");
         SDL_SetWindowTitle(app.window, title.c_str());
 
@@ -388,6 +549,8 @@ int main(int argc, char* argv[]) {
                 app,
                 stage.value,
                 collision.value,
+                sonic.value,
+                player,
                 camera_x,
                 camera_y,
                 show_collision)) {

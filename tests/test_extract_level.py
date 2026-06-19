@@ -70,6 +70,18 @@ class ExtractLevelTests(unittest.TestCase):
         self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
         self.assertEqual(struct.unpack(">II", data[16:24]), (2, 1))
 
+    def test_collision_surface_rises_left_to_right(self):
+        self.assertEqual(
+            [extract_level.collision_surface(2, x) for x in range(8)],
+            [7, 6, 5, 4, 3, 2, 1, 0],
+        )
+
+    def test_collision_mask_fills_below_surface(self):
+        mask = extract_level.collision_tile_mask(25)
+        self.assertFalse(mask[3][0])
+        self.assertTrue(mask[4][0])
+        self.assertTrue(mask[7][7])
+
     def test_reference_validation_detects_exact_match(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

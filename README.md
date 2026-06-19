@@ -33,8 +33,9 @@ The verification tool accepts only the known reference image described in
 The level extractor currently exports Neo South Island Act 1 as inspectable
 plane/collision PNGs, object JSON, and raw data under the ignored `out/nsi1/`
 directory.
-The native SDL3 stage viewer then displays that data through a 160 by 152
-integer-scaled viewport; see [`docs/pc-viewer.md`](docs/pc-viewer.md).
+The native SDL3 prototype then displays that data through a 160 by 152
+integer-scaled viewport with controllable Sonic movement; see
+[`docs/pc-viewer.md`](docs/pc-viewer.md).
 
 ## Repository policy
 

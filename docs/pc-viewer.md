@@ -37,22 +37,25 @@ Or build and run in one step:
 
 ## Controls
 
-- Arrow keys or WASD: move the camera
-- Shift: faster camera movement
+- Left/right arrows or A/D: move Sonic
+- Space or Z: jump
 - C: toggle the collision overlay
-- R: recenter on Sonic's original stage start position
+- R: reset Sonic to the original stage start position
 - 1 through 6: set exact integer window scale
 - Escape: quit
 
 Gamepads are supported too:
 
-- Left stick or D-pad: move the camera
-- South face button: toggle collision
-- Back button: recenter
+- Left stick or D-pad: move Sonic
+- South face button: jump
+- East face button: toggle collision
+- Back button: reset Sonic
 
-The blue/yellow cross marks the original player start coordinate from the level
-metadata. The marker is temporary; Sonic's real sprite and update loop come in a
-later native-engine milestone.
+The viewer renders Sonic's idle frame from the user's ROM and drives a first
+native movement prototype over a byte-per-pixel collision mask generated from
+the level's Plane 2 collision data. It is intentionally simple: no rolling,
+springs, enemies, object interaction, animation state machine, or exact player
+physics yet.
 
 Camera movement uses the original stage bounds: X starts at 64 and ends 224
 pixels before the layout edge; Y starts at 64 and ends 216 pixels before the

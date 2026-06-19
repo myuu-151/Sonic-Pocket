@@ -25,6 +25,12 @@ DEFAULT_REFERENCE = (
 )
 PALETTE_COLLECTION_OFFSET = 0x03C748
 PALETTE_COLLECTION_SIZE = 0x1800
+SPRITE_TILES_OFFSET = 0x00CB34
+SPRITE_TILES_SIZE = 0x2AA40
+SONIC_IDLE_LAYERS = (
+    (0x000B7C, 0x22, 0),
+    (0x000D7C, 0x16, 7),
+)
 
 
 @dataclass(frozen=True)
@@ -252,7 +258,7 @@ def render_collision(
 ) -> tuple[int, int, bytes]:
     layout = unpack_words(layout_data)
     block_words = unpack_words(block_data)
-    path1 = collision_data[: len(collision_data) // 2]
+    collision_types = unpack_words(collision_data)
     width = width_blocks * 32
     height = height_blocks * 32
     image = bytearray(width * height * 3)
@@ -263,7 +269,8 @@ def render_collision(
         block_y = (index // width_blocks) * 32
         for position, entry in enumerate(entries):
             tile_id = entry & 0x01FF
-            color = collision_color(path1[tile_id])
+            collision_type = collision_types[tile_id]
+            color = collision_color(0 if collision_type == 0xFFFF else collision_type)
             tile_x = block_x + (position % 4) * 8
             tile_y = block_y + (position // 4) * 8
             row_pixels = bytes(color) * 8
@@ -364,6 +371,162 @@ def write_png(path: Path, width: int, height: int, rgb: bytes) -> None:
     path.write_bytes(contents)
 
 
+def write_png_rgba(path: Path, width: int, height: int, rgba: bytes) -> None:
+    expected = width * height * 4
+    if len(rgba) != expected:
+        raise ValueError(f"expected {expected} RGBA bytes, found {len(rgba)}")
+    stride = width * 4
+    scanlines = b"".join(
+        b"\0" + rgba[row * stride : (row + 1) * stride] for row in range(height)
+    )
+    contents = (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(scanlines, 9))
+        + png_chunk(b"IEND", b"")
+    )
+    path.write_bytes(contents)
+
+
+def render_sprite(
+    sprite_tiles: bytes,
+    palette_collection: bytes,
+    layers: list[tuple[bytes, int]],
+) -> tuple[int, int, int, int, bytes]:
+    entries: list[tuple[int, int, int, int]] = []
+    for sprite_data, palette_id in layers:
+        if len(sprite_data) < 2:
+            raise ValueError("sprite definition is truncated")
+        count = sprite_data[0]
+        if 2 + count * 4 > len(sprite_data):
+            raise ValueError("sprite tile list is truncated")
+        for index in range(count):
+            offset = 2 + index * 4
+            tile_id = int.from_bytes(sprite_data[offset : offset + 2], "little")
+            x = int.from_bytes(
+                sprite_data[offset + 2 : offset + 3], "little", signed=True
+            )
+            y = int.from_bytes(
+                sprite_data[offset + 3 : offset + 4], "little", signed=True
+            )
+            entries.append((palette_id, tile_id, x, y))
+
+    min_x = min(x for _, _, x, _ in entries)
+    min_y = min(y for _, _, _, y in entries)
+    max_x = max(x + 8 for _, _, x, _ in entries)
+    max_y = max(y + 8 for _, _, _, y in entries)
+    width = max_x - min_x
+    height = max_y - min_y
+    image = bytearray(width * height * 4)
+    palettes = {
+        palette_id: build_palettes(palette_collection, [palette_id])[0]
+        for palette_id, _, _, _ in entries
+    }
+
+    for palette_id, tile_id, tile_x, tile_y in entries:
+        tile = decode_tile(sprite_tiles, tile_id)
+        for y, row in enumerate(tile):
+            for x, color_index in enumerate(row):
+                if color_index == 0:
+                    continue
+                destination_x = tile_x - min_x + x
+                destination_y = tile_y - min_y + y
+                destination = (destination_y * width + destination_x) * 4
+                image[destination : destination + 3] = bytes(
+                    palettes[palette_id][color_index]
+                )
+                image[destination + 3] = 255
+    return width, height, -min_x, -min_y, bytes(image)
+
+
+def collision_surface(collision_type: int, x: int) -> int | None:
+    if collision_type in (1, 22):
+        return 0
+    if collision_type == 2:
+        return 7 - x
+    if collision_type == 3:
+        return 7 - x // 2
+    if collision_type == 4:
+        return max(0, 3 - x // 2)
+    if 5 <= collision_type <= 8:
+        segment = collision_type - 5
+        return 7 - (segment * 8 + x) // 4
+    if collision_type == 9:
+        return max(0, 7 - x * 2)
+    if collision_type == 10:
+        return 7 if x < 4 else max(0, 7 - (x - 4) * 2)
+    if collision_type == 12:
+        return x
+    if collision_type == 13:
+        return 7 - (7 - x) // 2
+    if collision_type == 14:
+        return max(0, 3 - (7 - x) // 2)
+    if 15 <= collision_type <= 18:
+        segment = 18 - collision_type
+        return 7 - (segment * 8 + (7 - x)) // 4
+    if collision_type == 19:
+        return max(0, 7 - (7 - x) * 2)
+    if collision_type == 20:
+        return 7 if x > 3 else max(0, 7 - (3 - x) * 2)
+    if collision_type == 25:
+        return 4
+    return None
+
+
+def collision_tile_mask(collision_type: int) -> list[list[bool]]:
+    pixels = [[False] * 8 for _ in range(8)]
+    if collision_type in (21, 24, 26):
+        return [[True] * 8 for _ in range(8)]
+    if collision_type in (11, 23):
+        return pixels
+    for x in range(8):
+        surface = collision_surface(collision_type, x)
+        if surface is not None:
+            for y in range(max(0, surface), 8):
+                pixels[y][x] = True
+    return pixels
+
+
+def build_collision_mask(
+    layout_data: bytes,
+    block_data: bytes,
+    collision_data: bytes,
+    width_blocks: int,
+    height_blocks: int,
+) -> bytes:
+    layout = unpack_words(layout_data)
+    block_words = unpack_words(block_data)
+    collision_types = unpack_words(collision_data)
+    width = width_blocks * 32
+    height = height_blocks * 32
+    mask = bytearray(width * height)
+    tile_masks: dict[int, list[list[bool]]] = {}
+
+    for index, block_id in enumerate(layout):
+        entries = block_words[block_id * 16 : block_id * 16 + 16]
+        block_x = (index % width_blocks) * 32
+        block_y = (index // width_blocks) * 32
+        for position, entry in enumerate(entries):
+            tile_id = entry & 0x01FF
+            collision_type = collision_types[tile_id]
+            if collision_type == 0xFFFF:
+                collision_type = 0
+            tile_mask = tile_masks.setdefault(
+                collision_type, collision_tile_mask(collision_type)
+            )
+            flip_y = bool(entry & 0x4000)
+            flip_x = bool(entry & 0x8000)
+            tile_x = block_x + (position % 4) * 8
+            tile_y = block_y + (position // 4) * 8
+            for y in range(8):
+                source_y = 7 - y if flip_y else y
+                for x in range(8):
+                    source_x = 7 - x if flip_x else x
+                    if tile_mask[source_y][source_x]:
+                        mask[(tile_y + y) * width + tile_x + x] = 255
+    return bytes(mask)
+
+
 def validate_reference(
     segments: dict[str, bytes], spec: LevelSpec, reference: Path | None
 ) -> dict[str, Any]:
@@ -448,7 +611,7 @@ def extract(
         spec.height_blocks,
     )
     _, _, collision = render_collision(
-        segments["plane1"],
+        segments["plane2"],
         segments["blocks"],
         segments["collision"],
         spec.width_blocks,
@@ -467,6 +630,28 @@ def extract(
         composite_rgb(plane2_composited, plane1, plane1_mask),
     )
     write_png(output / "collision.png", width, height, collision)
+    collision_mask = build_collision_mask(
+        segments["plane2"],
+        segments["blocks"],
+        segments["collision"],
+        spec.width_blocks,
+        spec.height_blocks,
+    )
+    (output / "collision-mask.bin").write_bytes(collision_mask)
+
+    sprite_tiles = rom[
+        SPRITE_TILES_OFFSET : SPRITE_TILES_OFFSET + SPRITE_TILES_SIZE
+    ]
+    sonic_layers = [
+        (rom[offset : offset + size], palette_id)
+        for offset, size, palette_id in SONIC_IDLE_LAYERS
+    ]
+    sonic_width, sonic_height, sonic_origin_x, sonic_origin_y, sonic_rgba = (
+        render_sprite(sprite_tiles, palette_collection, sonic_layers)
+    )
+    write_png_rgba(
+        output / "sonic-idle.png", sonic_width, sonic_height, sonic_rgba
+    )
 
     objects = parse_objects(segments["objects"])
     (output / "objects.json").write_text(
@@ -502,6 +687,16 @@ def extract(
             "plane1": "plane1.png",
             "plane2": "plane2.png",
             "collision_path1": "collision.png",
+            "sonic_idle": "sonic-idle.png",
+        },
+        "collision_mask": {
+            "output": "collision-mask.bin",
+            "size": [width, height],
+            "solid_bytes": sum(1 for value in collision_mask if value),
+        },
+        "sonic_idle": {
+            "size": [sonic_width, sonic_height],
+            "origin": [sonic_origin_x, sonic_origin_y],
         },
         "reference_validation": validate_reference(segments, spec, reference),
     }

@@ -100,6 +100,9 @@ state for regression testing.
 
 ## 5. Implement the native engine
 
+- [x] Implement the first native controllable Sonic prototype with ROM-extracted
+      sprite art, gravity, jump input, camera follow, and generated stage
+      collision mask.
 - [ ] Implement 60 Hz presentation with the observed deterministic 30 Hz
       player gameplay tick; verify cadence for other subsystems.
 - [ ] Reimplement object scheduling and state.
@@ -165,7 +168,9 @@ disassembly release. A ROM-driven extractor now reconstructs Neo South Island
 Act 1's two tile planes, collision values, palettes, and 94 object placements;
 all extracted binary regions are validated byte-for-byte against that public
 reference. The first native SDL3 executable displays the reconstructed stage
-through an integer-scaled 160 by 152 viewport with camera controls and a
-collision overlay. The immediate target is turning this stage data and the
-mapped player behavior into the first native playable scene, while runtime
-traces remain the regression source for timing and behavior.
+through an integer-scaled 160 by 152 viewport. Sonic's idle sprite is now
+extracted from the user's ROM and driven by a first native movement prototype
+with left/right input, jumping, gravity, camera follow, and a generated Plane 2
+collision mask. The immediate target is replacing the prototype physics with
+the mapped player state machine and using runtime traces as the regression
+source for timing and behavior.
