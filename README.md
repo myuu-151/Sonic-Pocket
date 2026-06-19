@@ -23,6 +23,7 @@ Place a legally obtained ROM in the local `Rom/` directory, then run:
 ```powershell
 python tools/rominfo.py
 python tools/extract_level.py
+.\scripts\build-viewer.ps1 -Configuration Release -Run
 python -m unittest discover -s tests -v
 ```
 
@@ -32,6 +33,8 @@ The verification tool accepts only the known reference image described in
 The level extractor currently exports Neo South Island Act 1 as inspectable
 plane/collision PNGs, object JSON, and raw data under the ignored `out/nsi1/`
 directory.
+The native SDL3 stage viewer then displays that data through a 160 by 152
+integer-scaled viewport; see [`docs/pc-viewer.md`](docs/pc-viewer.md).
 
 ## Repository policy
 

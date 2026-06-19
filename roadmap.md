@@ -77,12 +77,14 @@ repository.
 
 ## 4. Create the PC shell
 
-- [ ] Establish a C++20 and CMake project.
+- [x] Establish a C++20 and CMake project.
 - [ ] Integrate SDL3 windowing, input, gamepad, audio, and configuration.
-- [ ] Render a 160 by 152 off-screen target with integer scaling.
+- [x] Render a 160 by 152 off-screen target with integer scaling.
 - [ ] Add deterministic fixed-step execution and input recording/playback.
 - [ ] Optionally embed Beetle NGP as an intermediate compatibility backend.
 - [ ] Add developer overlays for collision, objects, camera, and performance.
+  - [x] Add the first collision overlay and camera-position viewer controls.
+  - [ ] Add object and performance overlays.
 
 [Beetle NGP](https://github.com/libretro/beetle-ngp-libretro) already implements
 the TLCS-900/H, Z80, video, audio, memory, flash, and HLE BIOS behavior. It is
@@ -162,6 +164,8 @@ follow logic are mapped and cross-checked against ValleyBell's public SPA
 disassembly release. A ROM-driven extractor now reconstructs Neo South Island
 Act 1's two tile planes, collision values, palettes, and 94 object placements;
 all extracted binary regions are validated byte-for-byte against that public
-reference. The immediate target is turning this stage data and the mapped
-player behavior into the first native playable scene, while runtime traces
-remain the regression source for timing and behavior.
+reference. The first native SDL3 executable displays the reconstructed stage
+through an integer-scaled 160 by 152 viewport with camera controls and a
+collision overlay. The immediate target is turning this stage data and the
+mapped player behavior into the first native playable scene, while runtime
+traces remain the regression source for timing and behavior.
