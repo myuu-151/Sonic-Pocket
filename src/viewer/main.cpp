@@ -109,6 +109,7 @@ struct Player {
     bool grounded = false;
     bool facing_left = false;
     bool jump_held = false;
+    bool walking_active = false;
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
     float air_time = 0.0F;
@@ -406,6 +407,7 @@ void reset_player(Player& player, const CollisionMask& collision) {
     player.velocity_x = 0;
     player.velocity_y = 0;
     player.jump_held = false;
+    player.walking_active = false;
     player.animation_state = AnimationState::Idle;
     player.animation_time = 0.0F;
     player.air_time = 0.0F;
@@ -424,17 +426,28 @@ void update_player(Player& player, const CollisionMask& collision,
     player.jump_held = jump_held;
 
     if (player.grounded) {
-        if (movement > 0) {
+        if (movement != 0 && !player.walking_active &&
+            player.ground_speed == 0) {
+            player.walking_active = true;
+            player.velocity_x = 0;
+            player.velocity_y = 0;
+        } else if (movement > 0) {
+            player.walking_active = true;
             player.ground_speed = std::min(
                 player.ground_speed + kGroundAcceleration, kGroundMaxSpeed);
             player.facing_left = false;
         } else if (movement < 0) {
+            player.walking_active = true;
             player.ground_speed = std::max(
                 player.ground_speed - kGroundAcceleration, -kGroundMaxSpeed);
             player.facing_left = true;
         } else {
             player.ground_speed =
                 approach_fixed(player.ground_speed, 0, kGroundFriction);
+            if (std::abs(player.ground_speed) < 0x100) {
+                player.ground_speed = 0;
+                player.walking_active = false;
+            }
         }
         player.velocity_x = player.ground_speed;
         player.velocity_y = 0;
@@ -454,6 +467,7 @@ void update_player(Player& player, const CollisionMask& collision,
         player.velocity_y = -kJumpImpulse;
         player.velocity_x = player.ground_speed;
         player.grounded = false;
+        player.walking_active = false;
         player.air_time = 0.0F;
     }
 
@@ -499,6 +513,7 @@ void update_player(Player& player, const CollisionMask& collision,
             player.velocity_y = 0;
             player.ground_speed = player.velocity_x;
             player.grounded = true;
+            player.walking_active = player.ground_speed != 0;
             player.air_time = 0.0F;
         } else {
             player.grounded = false;
@@ -531,15 +546,15 @@ void update_player(Player& player, const CollisionMask& collision,
 }
 
 void update_camera(float& camera_x, float& camera_y, const Player& player,
-                   float delta_seconds) {
+                   float /*delta_seconds*/) {
     const float target_x = std::clamp(
         player.x() - (player.facing_left ? 112.0F : 48.0F),
         kCameraMinX,
         kCameraMaxX);
     const float target_y = std::clamp(
         player.y() - 76.0F, kCameraMinY, kCameraMaxY);
-    camera_x = approach(camera_x, target_x, 150.0F * delta_seconds);
-    camera_y = approach(camera_y, target_y, 150.0F * delta_seconds);
+    camera_x = target_x;
+    camera_y = target_y;
 }
 
 const SpriteFrame& select_animation_frame(
