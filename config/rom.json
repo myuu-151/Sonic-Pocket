@@ -1,0 +1,18 @@
+{
+  "game": "Sonic The Hedgehog - Pocket Adventure (World)",
+  "size": 2097152,
+  "hashes": {
+    "crc32": "8bd22145",
+    "md5": "6123e8a783b146bdcdc6a9fa95abb0bd",
+    "sha1": "5a881d8124d902b4a98d76362ad62566a86f0aba",
+    "sha256": "ead73b11039667fe0dab8a4619605bacc5c5d7c708f083c29f5090fe96c6a091"
+  },
+  "header": {
+    "copyright": "COPYRIGHT BY SNK CORPORATION",
+    "entry_point": "0x00200040",
+    "catalog": "0x0059",
+    "subcatalog": "0x05",
+    "mode": "0x10",
+    "title": "SONIC POCKET"
+  }
+}

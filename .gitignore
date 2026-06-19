@@ -15,6 +15,11 @@ out/
 *.wav
 *.trace
 
+# Python tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # Local editor and operating-system files
 .vs/
 .vscode/

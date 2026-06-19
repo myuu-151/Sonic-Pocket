@@ -1,0 +1,8 @@
+address,name,confidence,notes
+0x200040,rom_entry,confirmed,Entry point stored in the cartridge header
+0x20009C,bios_resume_jump,probable,Direct jump to BIOS address 0xFF1800
+0x2000A0,interrupt_handler_2000A0,confirmed,Saves registers and terminates with RETI
+0x20010D,wait_for_counter_400A,probable,Wait loop involving RAM byte 0x400A
+0x200124,startup_sequence,probable,Calls a series of initialization routines
+0x20018D,frame_callback_20018D,unknown,Callback-like block reached from startup control flow
+0x20024E,initial_ram_table,probable,Copied to RAM at 0x6FB8 during startup

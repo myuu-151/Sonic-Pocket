@@ -1,11 +1,31 @@
 # Sonic Pocket
 
-An early reverse-engineering and native-PC-port project for *Sonic the Hedgehog: Pocket Adventure*.
+A clean-room reverse-engineering and native PC port project for *Sonic the
+Hedgehog: Pocket Adventure*.
 
 ## Status
 
-Research and project scaffolding. No game code or assets have been decompiled yet.
+Early analysis. The reference ROM is identified, its cartridge header is
+understood, and the TLCS-900/H entry point at `0x200040` has been decoded.
 
-## Legal
+The current milestone is to map startup, interrupts, the frame loop, and the
+major engine subsystems before translating gameplay code.
 
-This repository does not contain the original ROM, game assets, or Neo Geo Pocket Color BIOS. Contributors must use their own legally obtained game data.
+## Quick start
+
+Place a legally obtained ROM in the local `Rom/` directory, then run:
+
+```powershell
+python tools/rominfo.py
+python -m unittest discover -s tests -v
+```
+
+The verification tool accepts only the known reference image described in
+[`config/rom.json`](config/rom.json). See
+[`docs/getting-started.md`](docs/getting-started.md) for the analysis workflow.
+
+## Repository policy
+
+This repository does not contain the original ROM, extracted game assets,
+Neo Geo Pocket Color BIOS, emulator installations, or generated full-ROM
+disassemblies. Contributors must provide their own legally obtained game data.
