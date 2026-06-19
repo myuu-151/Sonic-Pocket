@@ -31,8 +31,9 @@ constexpr int kGroundAcceleration = 0x20;
 constexpr int kGroundFriction = 0x20;
 constexpr int kGroundMaxSpeed = 0x800;
 constexpr int kGroundSkidDeceleration = 0x120;
-constexpr int kSkidAnimationTicks = 20;
-constexpr int kSkidDustTicks = 12;
+constexpr int kSkidAnimationTicks = 12;
+constexpr int kSkidDustTicks = 8;
+constexpr int kSkidDustSpawnInterval = 3;
 constexpr int kPeeloutSpeed = kGroundMaxSpeed;
 constexpr int kAirAcceleration = 0x10;
 constexpr int kAirMaxXSpeed = 0x800;
@@ -142,6 +143,7 @@ struct Player {
     bool input_up = false;
     bool input_down = false;
     int skid_ticks = 0;
+    int skid_dust_cooldown = 0;
     std::vector<DustPuff> dust_puffs;
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
@@ -549,10 +551,9 @@ void flip_player_facing(Player& player) {
 }
 
 void spawn_skid_dust(Player& player) {
-    const int velocity_sign = player.velocity_x < 0 ? -1 : 1;
     player.dust_puffs.push_back(DustPuff{
-        player.x() - static_cast<float>(velocity_sign * 10),
-        player.y() + 8.0F,
+        player.x(),
+        player.y() + 11.0F,
         kSkidDustTicks,
     });
 }
@@ -587,21 +588,28 @@ void update_player(Player& player, const CollisionMask& collision,
             if (input_matches_facing(player, movement)) {
                 player.ground_speed = std::min(
                     player.ground_speed + kGroundAcceleration, kGroundMaxSpeed);
+                player.skid_dust_cooldown = 0;
             } else {
-                if (player.ground_speed > 0x300 && player.skid_ticks == 0) {
+                const bool runtime_skid = player.ground_speed > 0x300;
+                if (runtime_skid && player.skid_ticks == 0) {
                     player.skid_ticks = kSkidAnimationTicks;
+                }
+                if (runtime_skid && player.skid_dust_cooldown <= 0) {
                     spawn_skid_dust(player);
+                    player.skid_dust_cooldown = kSkidDustSpawnInterval;
                 }
                 player.ground_speed -= kGroundSkidDeceleration;
                 if (player.ground_speed < 0) {
                     player.ground_speed = -player.ground_speed;
                     flip_player_facing(player);
                     player.skid_ticks = 0;
+                    player.skid_dust_cooldown = 0;
                 }
             }
         } else {
             player.ground_speed =
                 approach_fixed(player.ground_speed, 0, kGroundFriction);
+            player.skid_dust_cooldown = 0;
             if (std::abs(player.ground_speed) < 0x100) {
                 player.ground_speed = 0;
                 player.walking_active = false;
@@ -612,7 +620,11 @@ void update_player(Player& player, const CollisionMask& collision,
         if (player.skid_ticks > 0) {
             --player.skid_ticks;
         }
+        if (player.skid_dust_cooldown > 0) {
+            --player.skid_dust_cooldown;
+        }
     } else {
+        player.skid_dust_cooldown = 0;
         if (movement > 0) {
             player.velocity_x = std::min(
                 player.velocity_x + kAirAcceleration, kAirMaxXSpeed);

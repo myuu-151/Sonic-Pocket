@@ -93,14 +93,13 @@ SONIC_ANIMATIONS = {
     "balance": ((0x0053, 10), (0x0054, 10)),
 }
 EFFECT_ANIMATIONS = {
-    # Candidate ROM smoke/dust puff object frames used until the exact skid
-    # effect-spawn routine is fully mapped. These are raw sprite labels from
-    # Sprites.asm / AniScr_3E7DCF.
+    # AniScr_398726: skid smoke/dust puff object. Runtime traces show these
+    # extra sprite objects spawning beside Sonic during PAniScr_3988DD.
     "skid_dust": (
-        ("0719_C45C", 2),
-        ("071A_C462", 2),
-        ("071B_C468", 2),
-        ("071C_C46E", 2),
+        ("0198_289E", 2),
+        ("0199_28A4", 2),
+        ("019A_28AA", 2),
+        ("019B_28B0", 2),
     ),
 }
 
