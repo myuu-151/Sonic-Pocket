@@ -44,6 +44,7 @@ class LevelSpec:
     start_x: int
     start_y: int
     rings: int
+    background_palette: int
     segments: dict[str, Segment]
 
 
@@ -55,6 +56,7 @@ NSI1 = LevelSpec(
     start_x=0x70,
     start_y=0x1A8,
     rings=333,
+    background_palette=2,
     segments={
         "tiles": Segment("tiles.bin", 0x091D4C, 0x1C00, "level/1-1_TileData.bin"),
         "collision": Segment("collision.bin", 0x09394C, 0x0380, "level/1-1_Coll.bin"),
@@ -85,11 +87,11 @@ def unpack_words(data: bytes) -> list[int]:
 
 
 def decode_ngpc_color(word: int) -> tuple[int, int, int]:
-    """Decode an NGPC 12-bit BGR color into 8-bit RGB channels."""
+    """Decode an NGPC 12-bit RGB color into 8-bit channels."""
     return (
-        ((word >> 8) & 0x000F) * 17,
-        ((word >> 4) & 0x000F) * 17,
         (word & 0x000F) * 17,
+        ((word >> 4) & 0x000F) * 17,
+        ((word >> 8) & 0x000F) * 17,
     )
 
 
@@ -118,12 +120,23 @@ def palette_ids(data: bytes) -> list[int]:
 def build_palettes(collection: bytes, ids: Iterable[int]) -> list[list[tuple[int, int, int]]]:
     palettes: list[list[tuple[int, int, int]]] = []
     for palette_id in ids:
-        start = palette_id * 8
-        raw = collection[start : start + 8]
-        if len(raw) != 8:
+        start = palette_id * 6
+        raw = collection[start : start + 6]
+        if len(raw) != 6:
             raise ValueError(f"palette {palette_id} lies outside the palette collection")
-        palettes.append([decode_ngpc_color(value) for value in unpack_words(raw)])
+        palettes.append(
+            [(0, 0, 0)]
+            + [decode_ngpc_color(value) for value in unpack_words(raw)]
+        )
     return palettes
+
+
+def background_color(collection: bytes, palette_id: int) -> tuple[int, int, int]:
+    start = palette_id * 6
+    raw = collection[start : start + 2]
+    if len(raw) != 2:
+        raise ValueError(f"background palette {palette_id} lies outside the collection")
+    return decode_ngpc_color(int.from_bytes(raw, "little"))
 
 
 def render_block(
@@ -217,6 +230,10 @@ def composite_rgb(background: bytes, foreground: bytes, foreground_mask: bytes) 
             offset = pixel * 3
             result[offset : offset + 3] = foreground[offset : offset + 3]
     return bytes(result)
+
+
+def solid_rgb(width: int, height: int, color: tuple[int, int, int]) -> bytes:
+    return bytes(color) * (width * height)
 
 
 def collision_color(value: int) -> tuple[int, int, int]:
@@ -422,7 +439,7 @@ def extract(
         spec.width_blocks,
         spec.height_blocks,
     )
-    _, _, plane2, _ = render_plane(
+    _, _, plane2, plane2_mask = render_plane(
         segments["plane2"],
         segments["blocks"],
         segments["tiles"],
@@ -437,13 +454,17 @@ def extract(
         spec.width_blocks,
         spec.height_blocks,
     )
+    backdrop = solid_rgb(
+        width, height, background_color(palette_collection, spec.background_palette)
+    )
+    plane2_composited = composite_rgb(backdrop, plane2, plane2_mask)
     write_png(output / "plane1.png", width, height, plane1)
-    write_png(output / "plane2.png", width, height, plane2)
+    write_png(output / "plane2.png", width, height, plane2_composited)
     write_png(
         output / "stage.png",
         width,
         height,
-        composite_rgb(plane2, plane1, plane1_mask),
+        composite_rgb(plane2_composited, plane1, plane1_mask),
     )
     write_png(output / "collision.png", width, height, collision)
 
@@ -461,6 +482,7 @@ def extract(
             "size_pixels": [width, height],
             "start": {"x": spec.start_x, "y": spec.start_y},
             "ring_count": spec.rings,
+            "background_palette": spec.background_palette,
         },
         "source_rom": {
             "path": str(rom_path.resolve()),

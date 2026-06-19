@@ -20,8 +20,16 @@ class ExtractLevelTests(unittest.TestCase):
         data = struct.pack("<17H", *range(16), 0xFFFF)
         self.assertEqual(extract_level.palette_ids(data), list(range(16)))
 
-    def test_decode_ngpc_color_converts_bgr_nibbles(self):
-        self.assertEqual(extract_level.decode_ngpc_color(0x0A3F), (170, 51, 255))
+    def test_decode_ngpc_color_converts_rgb_nibbles(self):
+        self.assertEqual(extract_level.decode_ngpc_color(0x0A3F), (255, 51, 170))
+
+    def test_build_palettes_uses_three_color_six_byte_lines(self):
+        collection = struct.pack("<6H", 0x001, 0x020, 0x300, 0x004, 0x050, 0x600)
+        palette = extract_level.build_palettes(collection, [1])[0]
+        self.assertEqual(
+            palette,
+            [(0, 0, 0), (68, 0, 0), (0, 85, 0), (0, 0, 102)],
+        )
 
     def test_composite_rgb_uses_nonzero_foreground_mask(self):
         background = bytes([1, 2, 3, 4, 5, 6])
@@ -76,6 +84,7 @@ class ExtractLevelTests(unittest.TestCase):
                 start_x=0,
                 start_y=0,
                 rings=0,
+                background_palette=0,
                 segments={
                     "tiles": extract_level.Segment(
                         "tiles.bin", 0, 3, "level/1-1_TileData.bin"
