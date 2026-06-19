@@ -24,13 +24,18 @@ constexpr float kCameraMaxY = static_cast<float>(kStageHeight - 216);
 constexpr float kPlayerStartX = 112.0F;
 constexpr float kPlayerHalfWidth = 6.0F;
 constexpr float kPlayerHalfHeight = 13.0F;
-constexpr float kAcceleration = 520.0F;
-constexpr float kDeceleration = 700.0F;
-constexpr float kMaxRunSpeed = 115.0F;
-constexpr float kGravity = 520.0F;
-constexpr float kJumpSpeed = 230.0F;
 constexpr float kAnimationAirThreshold = 0.06F;
 constexpr Sint16 kGamepadDeadzone = 8000;
+constexpr int kFixedOne = 0x100;
+constexpr int kGroundAcceleration = 0x20;
+constexpr int kGroundFriction = 0x20;
+constexpr int kGroundMaxSpeed = 0x800;
+constexpr int kAirAcceleration = 0x10;
+constexpr int kAirMaxXSpeed = 0x800;
+constexpr int kGravity = 0x80;
+constexpr int kFallMaxSpeed = 0xF00;
+constexpr int kJumpImpulse = 0x900;
+constexpr int kJumpReleaseLimit = 0x400;
 
 struct Texture {
     SDL_Texture* value = nullptr;
@@ -96,16 +101,21 @@ struct Application {
 };
 
 struct Player {
-    float x = kPlayerStartX;
-    float y = 0.0F;
-    float velocity_x = 0.0F;
-    float velocity_y = 0.0F;
+    int x_raw = static_cast<int>(kPlayerStartX * kFixedOne);
+    int y_raw = 0;
+    int ground_speed = 0;
+    int velocity_x = 0;
+    int velocity_y = 0;
     bool grounded = false;
     bool facing_left = false;
+    bool jump_held = false;
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
     float air_time = 0.0F;
     std::size_t animation_frame = 0;
+
+    float x() const { return static_cast<float>(x_raw) / kFixedOne; }
+    float y() const { return static_cast<float>(y_raw) / kFixedOne; }
 };
 
 struct CollisionMask {
@@ -260,11 +270,11 @@ std::filesystem::path find_data_directory(
 
 void center_camera(float& camera_x, float& camera_y, const Player& player) {
     camera_x = std::clamp(
-        player.x - 48.0F,
+        player.x() - 48.0F,
         kCameraMinX,
         kCameraMaxX);
     camera_y = std::clamp(
-        player.y - 76.0F,
+        player.y() - 76.0F,
         kCameraMinY,
         kCameraMaxY);
 }
@@ -331,9 +341,10 @@ std::string_view animation_state_name(AnimationState state) {
 
 AnimationState choose_animation_state(const Player& player) {
     if (!player.grounded && player.air_time >= kAnimationAirThreshold) {
-        return player.velocity_y < 0.0F ? AnimationState::Jump : AnimationState::Fall;
+        return player.velocity_y < 0 ? AnimationState::Jump : AnimationState::Fall;
     }
-    if (std::abs(player.velocity_x) > 12.0F) {
+    if (std::abs(player.ground_speed) > 0x100 ||
+        std::abs(player.velocity_x) > 0x100) {
         return AnimationState::Run;
     }
     return AnimationState::Idle;
@@ -387,50 +398,93 @@ void reset_player(Player& player, const CollisionMask& collision) {
     player = {};
     const int surface = collision.first_solid_y(
         static_cast<int>(kPlayerStartX), 0, kStageHeight - 1);
-    player.y =
-        static_cast<float>(surface >= 0 ? surface : 568) - kPlayerHalfHeight;
+    player.y_raw = static_cast<int>(
+        (static_cast<float>(surface >= 0 ? surface : 568) - kPlayerHalfHeight) *
+        kFixedOne);
     player.grounded = true;
+    player.ground_speed = 0;
+    player.velocity_x = 0;
+    player.velocity_y = 0;
+    player.jump_held = false;
     player.animation_state = AnimationState::Idle;
     player.animation_time = 0.0F;
     player.air_time = 0.0F;
     player.animation_frame = 0;
 }
 
+int approach_fixed(int value, int target, int amount) {
+    if (value < target) {
+        return std::min(value + amount, target);
+    }
+    return std::max(value - amount, target);
+}
+
 void update_player(Player& player, const CollisionMask& collision,
-                   float movement, bool jump_pressed, float delta_seconds) {
-    if (movement != 0.0F) {
-        player.velocity_x += movement * kAcceleration * delta_seconds;
-        player.velocity_x =
-            std::clamp(player.velocity_x, -kMaxRunSpeed, kMaxRunSpeed);
-        player.facing_left = movement < 0.0F;
+                   int movement, bool jump_pressed, bool jump_held) {
+    player.jump_held = jump_held;
+
+    if (player.grounded) {
+        if (movement > 0) {
+            player.ground_speed = std::min(
+                player.ground_speed + kGroundAcceleration, kGroundMaxSpeed);
+            player.facing_left = false;
+        } else if (movement < 0) {
+            player.ground_speed = std::max(
+                player.ground_speed - kGroundAcceleration, -kGroundMaxSpeed);
+            player.facing_left = true;
+        } else {
+            player.ground_speed =
+                approach_fixed(player.ground_speed, 0, kGroundFriction);
+        }
+        player.velocity_x = player.ground_speed;
+        player.velocity_y = 0;
     } else {
-        player.velocity_x = approach(
-            player.velocity_x, 0.0F, kDeceleration * delta_seconds);
+        if (movement > 0) {
+            player.velocity_x = std::min(
+                player.velocity_x + kAirAcceleration, kAirMaxXSpeed);
+            player.facing_left = false;
+        } else if (movement < 0) {
+            player.velocity_x = std::max(
+                player.velocity_x - kAirAcceleration, -kAirMaxXSpeed);
+            player.facing_left = true;
+        }
     }
 
     if (jump_pressed && player.grounded) {
-        player.velocity_y = -kJumpSpeed;
+        player.velocity_y = -kJumpImpulse;
+        player.velocity_x = player.ground_speed;
         player.grounded = false;
+        player.air_time = 0.0F;
     }
 
-    player.velocity_y += kGravity * delta_seconds;
-    player.x += player.velocity_x * delta_seconds;
-    player.x = std::clamp(
-        player.x,
-        kCameraMinX + kPlayerHalfWidth,
-        kCameraMaxX + kLogicalWidth - kPlayerHalfWidth);
+    if (!player.grounded && !jump_held && player.velocity_y < -kJumpReleaseLimit) {
+        player.velocity_y = -kJumpReleaseLimit;
+    }
 
-    const float previous_y = player.y;
-    player.y += player.velocity_y * delta_seconds;
-    const int left = static_cast<int>(std::floor(player.x - kPlayerHalfWidth));
-    const int center = static_cast<int>(std::floor(player.x));
-    const int right = static_cast<int>(std::floor(player.x + kPlayerHalfWidth));
+    if (!player.grounded) {
+        player.velocity_y = std::min(player.velocity_y + kGravity, kFallMaxSpeed);
+    }
 
-    if (player.velocity_y >= 0.0F) {
+    player.x_raw += player.velocity_x;
+    player.x_raw = std::clamp(
+        player.x_raw,
+        static_cast<int>((kCameraMinX + kPlayerHalfWidth) * kFixedOne),
+        static_cast<int>((kCameraMaxX + kLogicalWidth - kPlayerHalfWidth) * kFixedOne));
+
+    const int previous_y_raw = player.y_raw;
+    player.y_raw += player.velocity_y;
+    const float player_x = player.x();
+    const float player_y = player.y();
+    const int left = static_cast<int>(std::floor(player_x - kPlayerHalfWidth));
+    const int center = static_cast<int>(std::floor(player_x));
+    const int right = static_cast<int>(std::floor(player_x + kPlayerHalfWidth));
+
+    if (player.velocity_y >= 0) {
         const int scan_start = static_cast<int>(
-            std::floor(previous_y + kPlayerHalfHeight - 2.0F));
+            std::floor(static_cast<float>(previous_y_raw) / kFixedOne +
+                       kPlayerHalfHeight - 2.0F));
         const int scan_end = static_cast<int>(
-            std::ceil(player.y + kPlayerHalfHeight + 3.0F));
+            std::ceil(player_y + kPlayerHalfHeight + 3.0F));
         int surface = -1;
         for (const int sensor_x : {left, center, right}) {
             const int hit = collision.first_solid_y(
@@ -440,8 +494,10 @@ void update_player(Player& player, const CollisionMask& collision,
             }
         }
         if (surface >= 0) {
-            player.y = static_cast<float>(surface) - kPlayerHalfHeight;
-            player.velocity_y = 0.0F;
+            player.y_raw = static_cast<int>(
+                (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
+            player.velocity_y = 0;
+            player.ground_speed = player.velocity_x;
             player.grounded = true;
             player.air_time = 0.0F;
         } else {
@@ -454,14 +510,15 @@ void update_player(Player& player, const CollisionMask& collision,
         for (const int sensor_x : {left, center, right}) {
             const int hit = collision.first_solid_y(
                 sensor_x,
-                static_cast<int>(player.y + kPlayerHalfHeight - 5.0F),
-                static_cast<int>(player.y + kPlayerHalfHeight + 7.0F));
+                static_cast<int>(player.y() + kPlayerHalfHeight - 5.0F),
+                static_cast<int>(player.y() + kPlayerHalfHeight + 7.0F));
             if (hit >= 0 && (surface < 0 || hit < surface)) {
                 surface = hit;
             }
         }
         if (surface >= 0) {
-            player.y = static_cast<float>(surface) - kPlayerHalfHeight;
+            player.y_raw = static_cast<int>(
+                (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
             player.air_time = 0.0F;
         } else {
             player.grounded = false;
@@ -469,18 +526,18 @@ void update_player(Player& player, const CollisionMask& collision,
     }
 
     if (!player.grounded) {
-        player.air_time += delta_seconds;
+        player.air_time += 1.0F / 60.0F;
     }
 }
 
 void update_camera(float& camera_x, float& camera_y, const Player& player,
                    float delta_seconds) {
     const float target_x = std::clamp(
-        player.x - (player.facing_left ? 112.0F : 48.0F),
+        player.x() - (player.facing_left ? 112.0F : 48.0F),
         kCameraMinX,
         kCameraMaxX);
     const float target_y = std::clamp(
-        player.y - 76.0F, kCameraMinY, kCameraMaxY);
+        player.y() - 76.0F, kCameraMinY, kCameraMaxY);
     camera_x = approach(camera_x, target_x, 150.0F * delta_seconds);
     camera_y = approach(camera_y, target_y, 150.0F * delta_seconds);
 }
@@ -521,8 +578,8 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
     }
 
     SDL_FRect sonic_destination{
-        std::floor(player.x - camera_x - sonic.origin_x),
-        std::floor(player.y - camera_y - sonic.origin_y),
+        std::floor(player.x() - camera_x - sonic.origin_x),
+        std::floor(player.y() - camera_y - sonic.origin_y),
         sonic.width,
         sonic.height,
     };
@@ -709,23 +766,30 @@ int main(int argc, char* argv[]) {
         previous_ticks = current_ticks;
 
         const bool* keyboard = SDL_GetKeyboardState(nullptr);
-        float movement_x = 0.0F;
+        int movement_x = 0;
         movement_x += keyboard[SDL_SCANCODE_RIGHT] || keyboard[SDL_SCANCODE_D];
         movement_x -= keyboard[SDL_SCANCODE_LEFT] || keyboard[SDL_SCANCODE_A];
+        bool jump_held =
+            keyboard[SDL_SCANCODE_SPACE] || keyboard[SDL_SCANCODE_Z];
 
         if (app.gamepad != nullptr) {
-            movement_x += normalized_axis(SDL_GetGamepadAxis(
+            const float analog_x = normalized_axis(SDL_GetGamepadAxis(
                 app.gamepad, SDL_GAMEPAD_AXIS_LEFTX));
+            movement_x += analog_x > 0.35F;
+            movement_x -= analog_x < -0.35F;
             movement_x += SDL_GetGamepadButton(
                 app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
             movement_x -= SDL_GetGamepadButton(
                 app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+            jump_held = jump_held ||
+                SDL_GetGamepadButton(app.gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
         }
 
         update_player(
             player, collision_mask,
-            std::clamp(movement_x, -1.0F, 1.0F),
-            jump_pressed, delta_seconds);
+            std::clamp(movement_x, -1, 1),
+            jump_pressed,
+            jump_held);
         jump_pressed = false;
         update_animation(player, sonic_animations, delta_seconds);
         update_camera(camera_x, camera_y, player, delta_seconds);
@@ -736,8 +800,11 @@ int main(int argc, char* argv[]) {
             "Sonic Pocket - Camera " +
             std::to_string(static_cast<int>(camera_x)) + ", " +
             std::to_string(static_cast<int>(camera_y)) + " - Sonic " +
-            std::to_string(static_cast<int>(player.x)) + ", " +
-            std::to_string(static_cast<int>(player.y)) + " - " +
+            std::to_string(static_cast<int>(player.x())) + ", " +
+            std::to_string(static_cast<int>(player.y())) + " - gs " +
+            std::to_string(player.ground_speed) + " vx " +
+            std::to_string(player.velocity_x) + " vy " +
+            std::to_string(player.velocity_y) + " - " +
             std::string(animation_state_name(player.animation_state)) +
             (player.grounded ? " grounded" : " air") +
             (show_collision ? " - Collision ON" : "");
