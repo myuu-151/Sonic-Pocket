@@ -53,6 +53,11 @@ address,name,kind,confidence,notes
 0x39B508,resolve_ground_surface_collision,function,probable,Probes around the current surface quadrant and snaps the player to the selected ground wall or ceiling
 0x39B83E,check_ground_attachment,function,probable,Uses paired surface sensors to update angle and reports when the player has lost contact
 0x39BAD4,resolve_airborne_collision,function,probable,Integrates airborne movement then resolves floor ceiling and wall contacts from velocity direction
+0x39C960,apply_vertical_camera_follow,function,probable,Adjusts player Y against the vertical follow offset and clamps movement to the stage camera bounds
+0x39C9AF,cache_camera_relative_world_position,function,probable,Adds the camera origin to the current transformed object coordinates
+0x39C9D9,update_player_camera_follow,function,probable,Moves horizontal and vertical follow offsets toward their targets and clamps the camera to stage bounds
+0x39CE20,read_player_integer_position,function,confirmed,Returns the player integer X and Y coordinates from RAM 0x671A and 0x671E
+0x39D0D5,initialize_camera_horizontal_follow,function,confirmed,Initializes the horizontal follow offset as player X minus camera X
 0x39D085,level_manager_task_init,function,probable,Initializes the persistent level manager task at RAM 0x6754
 0x39D416,set_player_state_if_active,function,probable,Replaces the player task function when gameplay is in an active state
 0x39E1AB,gameplay_session_task_init,function,probable,Loads a selected stage and creates level-manager and player tasks
@@ -67,6 +72,15 @@ address,name,kind,confidence,notes
 0x004D42,controller_state_pressed_or_repeat,data,probable,New presses plus generated key-repeat events
 0x004D44,controller_repeat_counter,data,probable,Frame counter used to generate repeated button events
 0x004D45,controller_repeat_delay,data,probable,Repeat threshold initialized to six frames
+0x00506C,camera_x,data,confirmed,Horizontal world-space camera origin used by rendering and tile-map upload
+0x00506E,camera_y,data,confirmed,Vertical world-space camera origin used by rendering and tile-map upload
+0x00507A,camera_min_x,data,probable,Lower horizontal stage camera bound
+0x00507C,camera_max_x,data,probable,Upper horizontal stage camera bound
+0x00507E,camera_min_y,data,probable,Lower vertical stage camera bound
+0x005080,camera_max_y,data,probable,Upper vertical stage camera bound
 0x006708,player_task,data,confirmed,Static player task node and state beginning at this RAM address
 0x006754,level_manager_task,data,probable,Static level-manager task node beginning at this RAM address
+0x0067A4,camera_follow_x_offset,data,confirmed,Player horizontal screen offset moved toward 48 or 112 by at most two pixels per gameplay tick
+0x0067A6,camera_follow_y_offset,data,probable,Player vertical screen offset bounded to 8 through 136 and moved toward its target by at most four pixels per gameplay tick
+0x0067BA,camera_follow_y_target,data,probable,Target vertical screen offset consumed by the camera follow routine
 0x0068E8,timer0_restart_enabled,data,probable,Controls the Timer 0 restart performed during VBlank

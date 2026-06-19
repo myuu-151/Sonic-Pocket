@@ -154,6 +154,8 @@ The project is currently in phase 2: mapping the original game. Startup,
 VBlank, input polling, task scheduling, core player movement, spindash, roll,
 and the first collision pass are mapped. Full-height jump timing is now
 runtime-confirmed. Hurt, death, and vertical spring behavior are also mapped
-from a directed runtime trace. The immediate target is camera and stage-object
-state mapping, with a short-tap jump trace retained as a small variable-height
-validation task.
+from a directed runtime trace. The camera origin, stage bounds, and static
+follow logic are mapped; the extended runtime tracer is ready to confirm its
+look-ahead polarity and vertical modes. The immediate target is that camera
+capture and stage-object state mapping, with a short-tap jump trace retained
+as a small variable-height validation task.

@@ -51,7 +51,13 @@ The trace contains controller state and the following player-task fields:
 | X velocity | `0x6722` |
 | Y velocity | `0x6724` |
 | Collision radii | `0x673E` and `0x673F` |
+| Camera world origin | `0x506C` and `0x506E` |
+| Camera horizontal/vertical follow offsets | `0x67A4` and `0x67A6` |
+| Camera vertical follow target | `0x67BA` |
+| Camera stage bounds | `0x507A` through `0x5080` |
 
 Once captured, the first analysis pass should locate frames where the task
 state changes, where the angle leaves zero on a slope, where airborne flag bit
-1 changes, and where the vertical radius changes between 13 and 10.
+1 changes, and where the vertical radius changes between 13 and 10. Camera
+captures should additionally compare `player X - camera X` and
+`player Y - camera Y` against the follow-offset columns.
