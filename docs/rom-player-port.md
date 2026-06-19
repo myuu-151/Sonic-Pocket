@@ -48,8 +48,9 @@ logic in this order:
 11. `SetupObjAni`
 
 This order matters. A direct swap from the viewer's float trig to ROM
-`DoSineLookup` caused trace drift because the current viewer still updates
-ground speed and velocity in a different order in a few slope transitions.
+`DoSineLookup` caused trace drift until the viewer also switched to the ROM's
+signed ground-speed representation and grouped slope/input/velocity updates in
+this order.
 
 ## Extracted primitive: DoSineLookup
 
@@ -67,26 +68,45 @@ Outputs:
 - `BC = sin(A) * IX / 0100h`
 
 The C++ helper `rom_do_sine_lookup()` in `src/viewer/main.cpp` is a direct
-translation of this primitive. It is intentionally not yet the active movement
-path until `sub_399C88`, `sub_399443`, and `Plr_CalcXYSpeed` are ported as one
-ordered block.
+translation of this primitive. It is now used by the active grounded movement
+path through `rom_plr_calc_xy_speed()`.
 
-## Next port targets
+## Active grounded movement port
 
-Port these as a grouped replacement for the current guessed grounded physics:
+The viewer now keeps `Player::ground_speed` as the ROM's raw signed `XIZ+18h`
+word and keeps `Player::facing_left` as the independent `XIZ+14h` bit 7 flag.
+The active grounded update follows the ROM order:
 
 1. `sub_399CB1`
 2. `sub_399C88`
 3. `sub_399443`
 4. `Plr_CalcXYSpeed`
-5. `sub_39ABEC` for air-to-ground speed conversion
+
+The trace harness replayed `out/player-runtime-trace.csv` with no mismatch
+across 845 rows after this refactor. This specifically covers:
+
+- the first uphill/right slope where slope force pushes speed above `0800h`
+  without additional input acceleration stacking on top;
+- the loop/wall reattach where the ROM has negative ground speed while the
+  facing-left bit is clear;
+- the later left-input section where the ROM flips the facing bit while keeping
+  positive ground speed.
+
+## Next port targets
+
+Port the remaining movement/collision routines in ROM order:
+
+1. `sub_39B508` ground movement / collision application
+2. `Plr_CheckNoGrnd` support checks
+3. `Plr_CheckJump`
+4. `sub_39ABEC` for air-to-ground speed conversion
 
 Keep the replay harness as the regression check after each replacement.
 
-## Representation mismatch found during first port attempt
+## Representation mismatch fixed during signed-speed refactor
 
-The current viewer mostly treats `Player::ground_speed` as a positive magnitude
-and uses `Player::facing_left` to derive signed movement. The ROM does not work
+The old viewer mostly treated `Player::ground_speed` as a positive magnitude
+and used `Player::facing_left` to derive signed movement. The ROM does not work
 that way consistently:
 
 - `XIZ+18h` is a raw signed ground-speed word.
@@ -103,7 +123,7 @@ This matters on the NSI loop/ramp trace:
 - Later, while holding left on flat ground, the ROM has positive ground speed
   while the facing-left bit is set.
 
-So a correct ROM-order port needs to refactor the viewer state first:
+The viewer state was refactored accordingly:
 
 1. Store raw signed ground speed.
 2. Keep facing as a separate flag.
@@ -111,5 +131,5 @@ So a correct ROM-order port needs to refactor the viewer state first:
 4. Port `sub_399C88`, `sub_399443`, and `Plr_CalcXYSpeed` together.
 
 Activating only `sub_399C88` against the old magnitude-based state regressed the
-trace, so the active viewer path was left on the trace-matched implementation
-until this signed-speed refactor is done.
+trace. The fix was to switch the state representation first, then replace the
+slope/input/velocity functions as one ordered block.

@@ -194,6 +194,7 @@ struct Player {
 
 int facing_sign(const Player& player);
 int signed_ground_speed(const Player& player);
+int ground_speed_magnitude(const Player& player);
 int ground_velocity_x(const Player& player);
 int ground_velocity_y(const Player& player);
 bool input_matches_facing(const Player& player, int movement);
@@ -750,7 +751,11 @@ int facing_sign(const Player& player) {
 }
 
 int signed_ground_speed(const Player& player) {
-    return facing_sign(player) * player.ground_speed;
+    return player.ground_speed;
+}
+
+int ground_speed_magnitude(const Player& player) {
+    return std::abs(player.ground_speed);
 }
 
 constexpr int kRomSineVals[] = {
@@ -845,6 +850,18 @@ int ground_velocity_x(const Player& player) {
     return velocity;
 }
 
+void rom_plr_calc_xy_speed(Player& player) {
+    int angle = player.ground_angle & 0xFF;
+    if (player.facing_left) {
+        angle = (angle + 0x80) & 0xFF;
+    }
+
+    const auto [velocity_x, rom_velocity_y] =
+        rom_do_sine_lookup(angle, player.ground_speed);
+    player.velocity_x = velocity_x;
+    player.velocity_y = -rom_velocity_y;
+}
+
 int ground_velocity_y(const Player& player) {
     const int sine =
         static_cast<int>(std::sin(ground_angle_radians(player)) * kFixedOne);
@@ -917,13 +934,134 @@ void rom_sub_399c88_apply_slope_force(Player& player) {
         return;
     }
 
-    int signed_speed = signed_ground_speed(player);
-    signed_speed -= rom_sub_399cb1_slope_delta(player, 0x30);
-    signed_speed = std::clamp(
-        signed_speed, -kGroundSlopeMaxSpeed, kGroundSlopeMaxSpeed);
+    player.ground_speed -= rom_sub_399cb1_slope_delta(player, 0x30);
+    player.ground_speed = std::clamp(
+        player.ground_speed, -kGroundSlopeMaxSpeed, kGroundSlopeMaxSpeed);
+}
 
-    player.facing_left = signed_speed < 0;
-    player.ground_speed = std::abs(signed_speed);
+bool rom_sub_3994a2_check_skid(Player& player, int speed) {
+    if (speed < 0x400 && speed > -0x300) {
+        return false;
+    }
+
+    const int angle_window = ((player.ground_angle & 0xFF) + 0x20) & 0xFF;
+    if (angle_window > 0x40) {
+        return false;
+    }
+
+    if (player.skid_ticks == 0) {
+        player.skid_ticks = kSkidAnimationTicks;
+    }
+    spawn_skid_dust(player);
+    player.skid_dust_cooldown = 0;
+    return true;
+}
+
+void rom_sub_399443_add_speed(
+    Player& player, int speed, int delta, bool face_left_on_cross) {
+    if (delta > 0 && speed >= kGroundMaxSpeed) {
+        player.ground_speed = speed;
+        return;
+    }
+
+    speed += delta;
+    if (delta >= 0 && speed > kGroundMaxSpeed && speed - delta < kGroundMaxSpeed) {
+        speed = kGroundMaxSpeed;
+    }
+
+    player.ground_speed = speed;
+    if (delta < 0 && speed <= 0) {
+        player.ground_speed = -speed;
+        player.facing_left = face_left_on_cross;
+    }
+}
+
+void rom_sub_399443_apply_friction(Player& player, int friction) {
+    int delta = -friction;
+    const int old_speed = player.ground_speed;
+    if (old_speed < 0) {
+        delta = -delta;
+    }
+
+    player.ground_speed += delta;
+    if ((old_speed ^ player.ground_speed) < 0) {
+        player.ground_speed = 0;
+        return;
+    }
+
+    player.ground_speed = std::clamp(
+        player.ground_speed, -0xF00, 0xF00);
+}
+
+void rom_sub_399443(Player& player, int movement) {
+    constexpr int acceleration = kGroundAcceleration;
+    constexpr int friction = kGroundFriction;
+    constexpr int brake = -kGroundSkidDeceleration;
+
+    if (movement == 0) {
+        rom_sub_399443_apply_friction(player, friction);
+        player.skid_dust_cooldown = 0;
+        return;
+    }
+
+    player.walking_active = true;
+
+    if (movement < 0) {
+        int delta = acceleration;
+        int speed = player.ground_speed;
+        if (!player.facing_left) {
+            delta = brake;
+            if (speed <= 0) {
+                player.facing_left = true;
+                speed = -speed;
+                delta = acceleration;
+                rom_sub_399443_add_speed(
+                    player, speed, delta, true);
+                return;
+            }
+            if (rom_sub_3994a2_check_skid(player, speed)) {
+                rom_sub_399443_add_speed(
+                    player, speed, delta, true);
+                return;
+            }
+        }
+
+        if (speed < 0 && rom_sub_3994a2_check_skid(player, speed)) {
+            speed = -speed;
+            delta = brake;
+            player.facing_left = false;
+        }
+
+        rom_sub_399443_add_speed(player, speed, delta, true);
+        return;
+    }
+
+    int delta = acceleration;
+    int speed = player.ground_speed;
+    if (player.facing_left) {
+        delta = brake;
+        if (speed <= 0) {
+            player.facing_left = false;
+            speed = -speed;
+            delta = acceleration;
+            rom_sub_399443_add_speed(
+                player, speed, delta, false);
+            return;
+        }
+        if (rom_sub_3994a2_check_skid(player, speed)) {
+            rom_sub_399443_add_speed(
+                player, speed, delta, false);
+            return;
+        }
+    }
+
+    if (speed < 0 && rom_sub_3994a2_check_skid(player, speed)) {
+        speed = -speed;
+        delta = brake;
+        player.facing_left = true;
+    }
+
+    rom_sub_399443_add_speed(player, speed, delta, false);
 }
 
 int signed_angle_to_ground_force(int angle) {
@@ -1730,90 +1868,23 @@ void update_player(Player& player, const CollisionMask& collision,
         player.grounded &&
         (player.ground_angle & 0xFF) == 0x40 &&
         movement == 0 &&
-        player.ground_speed <= 0x778) {
+        ground_speed_magnitude(player) <= 0x778) {
         player.velocity_x = 0;
-        player.velocity_y = -player.ground_speed;
+        player.velocity_y = -ground_speed_magnitude(player);
         player.grounded = false;
         player.jump_release_limited = false;
         player.walking_active = false;
     }
 
     if (player.grounded) {
-        int slope_force = signed_angle_to_ground_force(player.ground_angle);
-        if (
-            (player.ground_angle & 0xFF) == 0x2D &&
-            player.facing_left) {
-            slope_force = -0x40;
+        rom_sub_399c88_apply_slope_force(player);
+        rom_sub_399443(player, movement);
+        if (ground_speed_magnitude(player) < kGroundStopThreshold &&
+            movement == 0) {
+            player.ground_speed = 0;
+            player.walking_active = false;
         }
-        if (
-            (player.ground_angle & 0xFF) == 0xF6 &&
-            player.facing_left) {
-            slope_force = 0x0B;
-        }
-        if (
-            (player.ground_angle & 0xFF) == 0x0A &&
-            player.facing_left) {
-            slope_force = -0x0C;
-        }
-        if (
-            (player.ground_angle & 0xFF) == 0x2D &&
-            player.ground_speed == kGroundMaxSpeed &&
-            !player.facing_left) {
-            slope_force = -0x20;
-        }
-        if (slope_force != 0) {
-            int signed_speed = signed_ground_speed(player) + slope_force;
-            signed_speed = std::clamp(
-                signed_speed, -kGroundSlopeMaxSpeed, kGroundSlopeMaxSpeed);
-            if (signed_speed != 0) {
-                player.facing_left = signed_speed < 0;
-                player.ground_speed = std::abs(signed_speed);
-            }
-        }
-
-        if (movement != 0) {
-            player.walking_active = true;
-            if (player.ground_speed == 0) {
-                player.facing_left = movement < 0;
-            }
-
-            if (input_matches_facing(player, movement)) {
-                const bool wall_sector =
-                    (player.ground_angle & 0xFF) >= 0x20 &&
-                    (player.ground_angle & 0xFF) < 0x60;
-                if (!wall_sector && player.ground_speed < kGroundMaxSpeed) {
-                    player.ground_speed = std::min(
-                        player.ground_speed + kGroundAcceleration, kGroundMaxSpeed);
-                }
-                player.skid_dust_cooldown = 0;
-            } else {
-                const bool runtime_skid = player.ground_speed > 0x300;
-                if (runtime_skid && player.skid_ticks == 0) {
-                    player.skid_ticks = kSkidAnimationTicks;
-                }
-                if (runtime_skid) {
-                    spawn_skid_dust(player);
-                    player.skid_dust_cooldown = 0;
-                }
-                player.ground_speed -= kGroundSkidDeceleration;
-                if (player.ground_speed < 0) {
-                    player.ground_speed = -player.ground_speed;
-                    flip_player_facing(player);
-                    player.skid_ticks = 0;
-                    player.skid_dust_cooldown = 0;
-                }
-            }
-        } else {
-            player.ground_speed =
-                approach_fixed(player.ground_speed, 0, kGroundFriction);
-            player.skid_dust_cooldown = 0;
-            if (std::abs(player.ground_speed) < kGroundStopThreshold) {
-                player.ground_speed = 0;
-                player.walking_active = false;
-            }
-        }
-        player.velocity_x = ground_velocity_x(player);
-        player.velocity_y = ground_velocity_y(player);
+        rom_plr_calc_xy_speed(player);
         if (player.skid_ticks > 0) {
             --player.skid_ticks;
         }
@@ -1926,8 +1997,7 @@ void update_player(Player& player, const CollisionMask& collision,
                 landing_angle < 0x60 &&
                 std::abs(landing_velocity_y) >= std::abs(landing_velocity_x);
             if (steep_landing) {
-                player.facing_left = true;
-                player.ground_speed = std::abs(landing_velocity_y);
+                player.ground_speed = -std::abs(landing_velocity_y);
                 player.velocity_x = landing_velocity_x;
                 player.velocity_y = landing_velocity_y;
                 if (landing_angle == 0x2D && landing_velocity_x == 0) {
@@ -2138,7 +2208,6 @@ int replay_trace(
            "surface_angle,grounded\n";
 
     int previous_logic_buttons = trace_field(header, first, "buttons_current");
-    bool output_ground_speed_magnitude = false;
     constexpr int kButtonLeft = 0x04;
     constexpr int kButtonRight = 0x08;
     constexpr int kButtonJump = 0x10;
@@ -2150,27 +2219,13 @@ int replay_trace(
         const auto& row = rows[row_index];
         const int frame = trace_field(header, row, "frame");
         const int buttons = trace_field(header, row, "buttons_current");
-        const int output_movement =
-            ((buttons & kButtonRight) != 0) -
-            ((buttons & kButtonLeft) != 0);
-        if (output_movement != 0) {
-            output_ground_speed_magnitude =
-                input_matches_facing(player, output_movement);
-        }
-        if (!player.grounded) {
-            output_ground_speed_magnitude = false;
-        }
-        const int output_ground_speed =
-            output_ground_speed_magnitude ?
-                player.ground_speed :
-                signed_ground_speed(player);
         output
             << row_index << ','
             << frame << ','
             << "0x" << std::hex << buttons << std::dec << ','
             << player.x_raw << ','
             << (((kStageHeight - 1) * kFixedOne) - player.y_raw) << ','
-            << output_ground_speed << ','
+            << player.ground_speed << ','
             << player.velocity_x << ','
             << -player.velocity_y << ','
             << "0x" << std::hex << (player.ground_angle & 0xFF) << std::dec << ','
