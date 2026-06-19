@@ -33,15 +33,16 @@ public class ImportSymbolsCsv extends GhidraScript {
                 continue;
             }
 
-            String[] fields = line.split(",", 4);
-            if (fields.length < 3) {
+            String[] fields = line.split(",", 5);
+            if (fields.length < 4) {
                 printerr("Skipping malformed CSV row " + (index + 1) + ": " + line);
                 continue;
             }
 
             long offset = Long.parseUnsignedLong(fields[0].trim().replaceFirst("^0[xX]", ""), 16);
             String name = fields[1].trim();
-            String confidence = fields[2].trim();
+            String kind = fields[2].trim();
+            String confidence = fields[3].trim();
             Address address = toAddr(offset);
             Function function = currentProgram.getFunctionManager().getFunctionAt(address);
 
@@ -54,6 +55,14 @@ public class ImportSymbolsCsv extends GhidraScript {
                     existing.getSource() == SourceType.USER_DEFINED) {
                     println("Removing stale symbol " + existing.getAddress() + " -> " + name);
                     existing.delete();
+                }
+            }
+
+            if (kind.equals("function") && function == null) {
+                disassemble(address);
+                function = currentProgram.getFunctionManager().getFunctionAt(address);
+                if (function == null) {
+                    function = createFunction(address, null);
                 }
             }
 

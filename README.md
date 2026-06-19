@@ -5,11 +5,12 @@ Adventure*.
 
 ## Status
 
-Early analysis. The reference ROM is identified, its cartridge header is
-understood, and the TLCS-900/H entry point at `0x200040` has been decoded.
+The reference ROM, startup, VBlank, controller polling, cooperative task
+scheduler, front-end flow, and first gameplay task chain are mapped. Sonic's
+player task at RAM `0x6708` now has confirmed position and velocity fields.
 
-The current milestone is to map startup, interrupts, the frame loop, and the
-major engine subsystems before translating gameplay code.
+The current milestone is to finish the player state machine and collision
+model, then translate one representative stage into native code.
 
 See the [project roadmap](roadmap.md) for phases, progress, and exit criteria.
 

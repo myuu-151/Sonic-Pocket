@@ -65,6 +65,10 @@ to the local project with:
 .\scripts\apply-ghidra-symbols.ps1
 ```
 
+The CSV `kind` column accepts `function` or `data`. Function rows are
+disassembled and defined before naming, which lets indirect task/state entry
+points become available to the headless decompiler.
+
 Selected functions can be decompiled headlessly without opening the GUI:
 
 ```powershell

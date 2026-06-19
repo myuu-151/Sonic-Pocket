@@ -1,26 +1,51 @@
-address,name,confidence,notes
-0x200040,rom_entry,confirmed,Entry point stored in the cartridge header
-0x20009C,bios_resume_jump,probable,Direct jump to BIOS address 0xFF1800
-0x2000A0,vblank_handler,confirmed,Installed in the Vertical_Blanking_Int vector at RAM 0x6FCC
-0x20010D,wait_for_counter_400A,probable,Wait loop involving RAM byte 0x400A
-0x200124,initialize_runtime_and_run_main_loop,probable,Initializes engine subsystems then enters the frame loop ending at 0x2001F8
-0x20018D,vblank_frame_update_callback,probable,Optional VBlank callback that updates scroll and graphics state
-0x2001FF,check_soft_reset_chord,confirmed,Restarts through the cartridge entry point when A B and Option are held together
-0x20024E,initial_ram_table,probable,Copied to RAM at 0x6FB8 during startup
-0x23BFE2,upload_sprite_state_to_vram,probable,Copies cached sprite attributes and optional palette numbers into K2GE VRAM
-0x23BD6F,update_pause_menu,probable,Handles Option presses and dispatches the active pause-menu state
-0x23C572,bios_com_on_rts,probable,Invokes BIOS vector 0x15 VEC_COMONRTS when BIOS services are available
-0x23C583,bios_com_off_rts,probable,Invokes BIOS vector 0x16 VEC_COMOFFRTS when BIOS services are available
-0x23C365,poll_controller_state,confirmed,Reads Controller_Status and updates current pressed and repeat state at 0x4D40
-0x23C388,update_button_state,probable,Updates one six-byte current pressed and key-repeat record
-0x23E17D,upload_palettes_if_dirty,probable,Uploads cached background and palette state to K2GE registers when marked dirty
-0x23E86A,upload_window_registers,probable,Copies cached window coordinates into K2GE window registers
-0x3A59C4,vblank_restart_timer0_if_enabled,probable,Restarts TLCS-900H Timer 0 when the flag at 0x68E8 is nonzero
-0x3F18FB,service_z80_command_queue,probable,Services the TLCS-900H to Z80 communication ring buffer
-0x3F1B67,advance_z80_command_queue,probable,Advances the Z80 command queue read index modulo 16
-0x0068E8,timer0_restart_enabled,probable,Controls the Timer 0 restart performed during VBlank
-0x004D40,controller_state_current,confirmed,Current raw active-high controller bits
-0x004D41,controller_state_pressed,confirmed,Bits that transitioned from released to pressed this poll
-0x004D42,controller_state_pressed_or_repeat,probable,New presses plus generated key-repeat events
-0x004D44,controller_repeat_counter,probable,Frame counter used to generate repeated button events
-0x004D45,controller_repeat_delay,probable,Repeat threshold initialized to six frames
+address,name,kind,confidence,notes
+0x200040,rom_entry,function,confirmed,Entry point stored in the cartridge header
+0x20009C,bios_resume_jump,function,probable,Direct jump to BIOS address 0xFF1800
+0x2000A0,vblank_handler,function,confirmed,Installed in the Vertical_Blanking_Int vector at RAM 0x6FCC
+0x20010D,wait_for_counter_400A,function,probable,Wait loop involving RAM byte 0x400A
+0x200124,engine_task_init,function,confirmed,Initializes engine subsystems then becomes the per-frame engine task
+0x20018D,vblank_frame_update_callback,function,probable,Optional VBlank callback that updates scroll and graphics state
+0x2001FF,check_soft_reset_chord,function,confirmed,Restarts through the cartridge entry point when A B and Option are held together
+0x20024E,initial_ram_table,data,probable,Copied to RAM at 0x6FB8 during startup
+0x237706,initialize_task_scheduler,function,confirmed,Initializes the fixed-size task pool and installs the first task
+0x23773F,run_task_scheduler,function,confirmed,Calls each task function through the linked task list forever
+0x237752,allocate_task,function,confirmed,Removes a task node from the free list and links it after the current task
+0x237775,link_task_after_current,function,probable,Initializes and links a task node after the current XIZ task
+0x2377A5,register_static_task,function,probable,Links a caller-supplied task node and marks it as statically allocated
+0x23AE72,frontend_manager_task_init,function,probable,Drives boot presentation attract flow menus and task launches
+0x23BD6F,update_pause_menu,function,probable,Handles Option presses and dispatches the active pause-menu state
+0x23BFE2,upload_sprite_state_to_vram,function,probable,Copies cached sprite attributes and optional palette numbers into K2GE VRAM
+0x23C365,poll_controller_state,function,confirmed,Reads Controller_Status and updates current pressed and repeat state at 0x4D40
+0x23C388,update_button_state,function,probable,Updates one six-byte current pressed and key-repeat record
+0x23C572,bios_com_on_rts,function,probable,Invokes BIOS vector 0x15 VEC_COMONRTS when BIOS services are available
+0x23C583,bios_com_off_rts,function,probable,Invokes BIOS vector 0x16 VEC_COMOFFRTS when BIOS services are available
+0x23E17D,upload_palettes_if_dirty,function,probable,Uploads cached background and palette state to K2GE registers when marked dirty
+0x23E86A,upload_window_registers,function,probable,Copies cached window coordinates into K2GE window registers
+0x291494,velocity_from_angle_and_speed,function,confirmed,Uses lookup tables to convert an angle and scalar speed into X and Y velocity
+0x291606,integrate_object_y_position,function,confirmed,Adds signed 8.8 Y velocity at offset 0x1C to the 24-bit Y position
+0x291613,integrate_object_x_position,function,confirmed,Adds signed 8.8 X velocity at offset 0x1A to the 24-bit X position
+0x399697,player_try_jump,function,confirmed,Tests newly pressed A or B and requests the jump state
+0x399740,player_task_init,function,confirmed,Initializes the player task and its state machine at RAM 0x6708
+0x3999F7,player_enter_idle,function,probable,Clears player velocity and enters the standing state
+0x399A2B,player_state_idle,function,confirmed,Handles standing look crouch and transition to movement from controller input
+0x399EE5,player_enter_walk,function,probable,Initializes the walking state and animation
+0x399EF2,player_state_walk,function,probable,Applies ground acceleration collision and animation while moving
+0x39AA86,player_enter_jump,function,confirmed,Applies jump velocity along the surface normal and enters airborne movement
+0x39AAF7,player_state_airborne,function,probable,Applies airborne movement gravity collision and animation
+0x39D085,level_manager_task_init,function,probable,Initializes the persistent level manager task at RAM 0x6754
+0x39D416,set_player_state_if_active,function,probable,Replaces the player task function when gameplay is in an active state
+0x39E1AB,gameplay_session_task_init,function,probable,Loads a selected stage and creates level-manager and player tasks
+0x3A59C4,vblank_restart_timer0_if_enabled,function,probable,Restarts TLCS-900H Timer 0 when the flag at 0x68E8 is nonzero
+0x3F18FB,service_z80_command_queue,function,probable,Services the TLCS-900H to Z80 communication ring buffer
+0x3F1B67,advance_z80_command_queue,function,probable,Advances the Z80 command queue read index modulo 16
+0x004014,free_task_head,data,probable,Pointer to the first free task node in the fixed task pool
+0x00401A,engine_task,data,confirmed,First task node and linked-list anchor initialized at boot
+0x00499A,active_task_count,data,probable,Count adjusted when dynamic tasks are allocated and freed
+0x004D40,controller_state_current,data,confirmed,Current raw active-high controller bits
+0x004D41,controller_state_pressed,data,confirmed,Bits that transitioned from released to pressed this poll
+0x004D42,controller_state_pressed_or_repeat,data,probable,New presses plus generated key-repeat events
+0x004D44,controller_repeat_counter,data,probable,Frame counter used to generate repeated button events
+0x004D45,controller_repeat_delay,data,probable,Repeat threshold initialized to six frames
+0x006708,player_task,data,confirmed,Static player task node and state beginning at this RAM address
+0x006754,level_manager_task,data,probable,Static level-manager task node beginning at this RAM address
+0x0068E8,timer0_restart_enabled,data,probable,Controls the Timer 0 restart performed during VBlank

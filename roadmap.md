@@ -35,8 +35,8 @@ can reproduce the expected checkpoints without manual interaction.
       [Neo Geo Pocket loader](https://github.com/nevesnunes/ghidra-neogeopocket-loader).
 - [ ] Use MAME's debugger for breakpoints, instruction traces, register
       inspection, and memory watches.
-- [ ] Prove the interrupt source used by the handler at `0x2000A0`.
-- [ ] Identify startup, VBlank, input polling, and the main/frame loop.
+- [x] Prove the interrupt source used by the handler at `0x2000A0`.
+- [x] Identify startup, VBlank, input polling, and the main/frame loop.
 - [ ] Label the title screen, object loop, collision, camera, level loading,
       animation, and sound-command systems.
 
