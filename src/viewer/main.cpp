@@ -29,6 +29,7 @@ constexpr float kDeceleration = 700.0F;
 constexpr float kMaxRunSpeed = 115.0F;
 constexpr float kGravity = 520.0F;
 constexpr float kJumpSpeed = 230.0F;
+constexpr float kAnimationAirThreshold = 0.06F;
 constexpr Sint16 kGamepadDeadzone = 8000;
 
 struct Texture {
@@ -87,6 +88,8 @@ struct Player {
     bool facing_left = false;
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
+    float air_time = 0.0F;
+    float run_cycle = 0.0F;
 };
 
 struct CollisionMask {
@@ -273,10 +276,10 @@ std::string_view animation_state_name(AnimationState state) {
 }
 
 AnimationState choose_animation_state(const Player& player) {
-    if (!player.grounded) {
+    if (!player.grounded && player.air_time >= kAnimationAirThreshold) {
         return player.velocity_y < 0.0F ? AnimationState::Jump : AnimationState::Fall;
     }
-    if (std::abs(player.velocity_x) > 8.0F) {
+    if (std::abs(player.velocity_x) > 12.0F) {
         return AnimationState::Run;
     }
     return AnimationState::Idle;
@@ -287,9 +290,17 @@ void update_animation(Player& player, float delta_seconds) {
     if (next_state != player.animation_state) {
         player.animation_state = next_state;
         player.animation_time = 0.0F;
-        return;
+    } else {
+        player.animation_time += delta_seconds;
     }
-    player.animation_time += delta_seconds;
+
+    if (player.animation_state == AnimationState::Run) {
+        const float speed_factor = std::clamp(
+            std::abs(player.velocity_x) / kMaxRunSpeed, 0.35F, 1.0F);
+        player.run_cycle += delta_seconds * 10.0F * speed_factor;
+    } else if (player.animation_state == AnimationState::Idle) {
+        player.run_cycle = 0.0F;
+    }
 }
 
 void reset_player(Player& player, const CollisionMask& collision) {
@@ -301,6 +312,8 @@ void reset_player(Player& player, const CollisionMask& collision) {
     player.grounded = true;
     player.animation_state = AnimationState::Idle;
     player.animation_time = 0.0F;
+    player.air_time = 0.0F;
+    player.run_cycle = 0.0F;
 }
 
 void update_player(Player& player, const CollisionMask& collision,
@@ -350,6 +363,7 @@ void update_player(Player& player, const CollisionMask& collision,
             player.y = static_cast<float>(surface) - kPlayerHalfHeight;
             player.velocity_y = 0.0F;
             player.grounded = true;
+            player.air_time = 0.0F;
         } else {
             player.grounded = false;
         }
@@ -368,9 +382,14 @@ void update_player(Player& player, const CollisionMask& collision,
         }
         if (surface >= 0) {
             player.y = static_cast<float>(surface) - kPlayerHalfHeight;
+            player.air_time = 0.0F;
         } else {
             player.grounded = false;
         }
+    }
+
+    if (!player.grounded) {
+        player.air_time += delta_seconds;
     }
 }
 
@@ -394,11 +413,7 @@ const SpriteFrame& select_animation_frame(
         case AnimationState::Idle:
             return run_frames[0];
         case AnimationState::Run: {
-            const float speed_factor = std::clamp(
-                std::abs(player.velocity_x) / kMaxRunSpeed, 0.35F, 1.0F);
-            const int frame_index = 1 + (
-                static_cast<int>(player.animation_time * 10.0F * speed_factor) % 3
-            );
+            const int frame_index = 1 + (static_cast<int>(player.run_cycle) % 3);
             return run_frames[frame_index];
         }
         case AnimationState::Jump:
@@ -646,6 +661,7 @@ int main(int argc, char* argv[]) {
             std::to_string(static_cast<int>(player.x)) + ", " +
             std::to_string(static_cast<int>(player.y)) + " - " +
             std::string(animation_state_name(player.animation_state)) +
+            (player.grounded ? " grounded" : " air") +
             (show_collision ? " - Collision ON" : "");
         SDL_SetWindowTitle(app.window, title.c_str());
 
