@@ -92,6 +92,17 @@ SONIC_ANIMATIONS = {
     # PAniScr_398A3C: act-clear / balance-like pose loop.
     "balance": ((0x0053, 10), (0x0054, 10)),
 }
+EFFECT_ANIMATIONS = {
+    # Candidate ROM smoke/dust puff object frames used until the exact skid
+    # effect-spawn routine is fully mapped. These are raw sprite labels from
+    # Sprites.asm / AniScr_3E7DCF.
+    "skid_dust": (
+        ("0719_C45C", 2),
+        ("071A_C462", 2),
+        ("071B_C468", 2),
+        ("071C_C46E", 2),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -633,6 +644,20 @@ def render_player_sprite(
     )
 
 
+def render_raw_sprite_file(
+    sprite_tiles: bytes,
+    palette_collection: bytes,
+    sprite_path: Path,
+    palette_id: int,
+) -> tuple[int, int, int, int, bytes]:
+    width, height, origin_x, origin_y, rgba = render_sprite(
+        sprite_tiles,
+        palette_collection,
+        [(sprite_path.read_bytes(), palette_id)],
+    )
+    return width, height, origin_x, origin_y, rgba
+
+
 def collision_surface(collision_type: int, x: int) -> int | None:
     if collision_type in (1, 22):
         return 0
@@ -907,6 +932,43 @@ def extract(
         json.dumps(sonic_animations, indent=2) + "\n", encoding="utf-8"
     )
 
+    effects_directory = output / "effects"
+    effects_directory.mkdir(exist_ok=True)
+    effect_animations: dict[str, list[dict[str, Any]]] = {}
+    sprites_directory = (reference or DEFAULT_REFERENCE) / "sprites"
+    for animation_name, frames in EFFECT_ANIMATIONS.items():
+        effect_animations[animation_name] = []
+        for frame_index, (sprite_stem, duration) in enumerate(frames):
+            frame_filename = f"{animation_name}_{frame_index:02d}.png"
+            sprite_path = sprites_directory / f"{sprite_stem}.spr"
+            frame_width, frame_height, origin_x, origin_y, frame_rgba = (
+                render_raw_sprite_file(
+                    sprite_tiles,
+                    palette_collection,
+                    sprite_path,
+                    0,
+                )
+            )
+            write_png_rgba(
+                effects_directory / frame_filename,
+                frame_width,
+                frame_height,
+                frame_rgba,
+            )
+            effect_animations[animation_name].append(
+                {
+                    "sprite": sprite_stem,
+                    "duration_frames": duration,
+                    "output": f"effects/{frame_filename}",
+                    "size": [frame_width, frame_height],
+                    "origin": [origin_x, origin_y],
+                }
+            )
+
+    (effects_directory / "animations.json").write_text(
+        json.dumps(effect_animations, indent=2) + "\n", encoding="utf-8"
+    )
+
     objects = parse_objects(segments["objects"])
     (output / "objects.json").write_text(
         json.dumps(objects, indent=2) + "\n", encoding="utf-8"
@@ -948,6 +1010,10 @@ def extract(
             "canvas": [SONIC_CANVAS_WIDTH, SONIC_CANVAS_HEIGHT],
             "origin": [SONIC_CANVAS_ORIGIN_X, SONIC_CANVAS_ORIGIN_Y],
             "states": sonic_animations,
+        },
+        "effect_animations": {
+            "output": "effects/animations.json",
+            "states": effect_animations,
         },
         "sonic_frames": sonic_frames,
         "collision_mask": {

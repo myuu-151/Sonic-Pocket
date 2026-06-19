@@ -61,3 +61,52 @@ state changes, where the angle leaves zero on a slope, where airborne flag bit
 1 changes, and where the vertical radius changes between 13 and 10. Camera
 captures should additionally compare `player X - camera X` and
 `player Y - camera Y` against the follow-offset columns.
+
+## Analyze the trace
+
+Use the trace analyzer to find the runtime windows that should drive native
+porting:
+
+```powershell
+python tools\analyze_player_trace.py out\player-runtime-trace.csv --max-events 80
+python tools\analyze_player_trace.py out\player-runtime-trace.csv --window 3200 --radius 24
+```
+
+The analyzer is intentionally not a physics model. It only reports ROM state,
+input, slope, skid/reversal, and camera evidence from the CSV. Any movement or
+camera implementation change should be compared against these values before it
+is treated as correct.
+
+The current older `out/player-runtime-trace.csv` contains slope and
+skid/reversal evidence, but it was captured before camera columns were added to
+the Lua script. Capture a fresh camera trace before implementing camera follow.
+
+## Capture animation and sprite parity
+
+When movement looks close but sprites are resetting, hanging, or using the
+wrong skid/peelout frame range, capture the wider animation trace:
+
+1. Enter Neo South Island Act 1 on flat ground.
+2. Open **Tools > Lua Console**.
+3. Open or drag in `scripts/bizhawk-animation-trace.lua`.
+4. Stand still for roughly one second.
+5. Hold Right until Sonic reaches full run speed.
+6. Keep holding Right briefly, then hold Left through the skid and reversal.
+7. Repeat once in the other direction if possible, then stop the script.
+
+The script writes `out/player-animation-trace.csv`. It includes the normal
+movement fields, the raw player task bytes from `0x6708`, animation byte
+`0x6751` (`XIZ+0x49`), and the live sprite-object list rooted at `0x49FA`.
+
+Known ROM evidence from the disassembly:
+
+| Behavior | Evidence |
+| --- | --- |
+| Skid animation script | `PAniScr_3988DD` |
+| Skid mode byte | writes `XIZ+0x49 = 0x06` |
+| Skid player sprites | `000C` for 20 frames, then `000D` for 3 frames |
+| Sprite object list | head at `0x49FA`, next free at `0x49F8`, entries are 12 bytes |
+
+Use this trace before changing animation timing or effect spawning. If the
+viewer does not follow the same `anim_mode_49` changes and sprite-list changes,
+the bug is in our state mapping rather than the extracted art.

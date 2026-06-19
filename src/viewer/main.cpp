@@ -30,6 +30,9 @@ constexpr int kFixedOne = 0x100;
 constexpr int kGroundAcceleration = 0x20;
 constexpr int kGroundFriction = 0x20;
 constexpr int kGroundMaxSpeed = 0x800;
+constexpr int kGroundSkidDeceleration = 0x120;
+constexpr int kSkidAnimationTicks = 20;
+constexpr int kSkidDustTicks = 12;
 constexpr int kPeeloutSpeed = kGroundMaxSpeed;
 constexpr int kAirAcceleration = 0x10;
 constexpr int kAirMaxXSpeed = 0x800;
@@ -37,6 +40,10 @@ constexpr int kGravity = 0x80;
 constexpr int kFallMaxSpeed = 0xF00;
 constexpr int kJumpImpulse = 0x900;
 constexpr int kJumpReleaseLimit = 0x400;
+constexpr float kCameraFollowRight = 48.0F;
+constexpr float kCameraFollowLeft = 112.0F;
+constexpr float kCameraFollowY = 76.0F;
+constexpr float kCameraFollowStep = 2.0F;
 
 struct Texture {
     SDL_Texture* value = nullptr;
@@ -115,6 +122,12 @@ struct Application {
     }
 };
 
+struct DustPuff {
+    float x = 0.0F;
+    float y = 0.0F;
+    int ticks = 0;
+};
+
 struct Player {
     int x_raw = static_cast<int>(kPlayerStartX * kFixedOne);
     int y_raw = 0;
@@ -128,6 +141,8 @@ struct Player {
     int movement_input = 0;
     bool input_up = false;
     bool input_down = false;
+    int skid_ticks = 0;
+    std::vector<DustPuff> dust_puffs;
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
     float air_time = 0.0F;
@@ -136,6 +151,10 @@ struct Player {
     float x() const { return static_cast<float>(x_raw) / kFixedOne; }
     float y() const { return static_cast<float>(y_raw) / kFixedOne; }
 };
+
+int facing_sign(const Player& player);
+int ground_velocity_x(const Player& player);
+bool input_matches_facing(const Player& player, int movement);
 
 struct CollisionMask {
     std::vector<unsigned char> pixels;
@@ -234,6 +253,34 @@ AnimationSequence load_animation_sequence(
     return sequence;
 }
 
+AnimationSequence load_effect_sequence(
+    SDL_Renderer* renderer,
+    const std::filesystem::path& data_directory,
+    std::string_view name,
+    const std::vector<float>& durations) {
+    AnimationSequence sequence;
+    for (std::size_t index = 0; index < durations.size(); ++index) {
+        char filename[32]{};
+        SDL_snprintf(
+            filename,
+            sizeof(filename),
+            "%.*s_%02zu.png",
+            static_cast<int>(name.size()),
+            name.data(),
+            index);
+        sequence.frames.push_back(
+            AnimationFrame{
+                load_sprite_frame(
+                    renderer,
+                    data_directory / "effects" / filename,
+                    0.0F,
+                    0.0F),
+                durations[index],
+            });
+    }
+    return sequence;
+}
+
 bool animation_sequence_loaded(const AnimationSequence& sequence) {
     return !sequence.frames.empty() &&
         std::all_of(
@@ -287,13 +334,15 @@ std::filesystem::path find_data_directory(
     return current;
 }
 
-void center_camera(float& camera_x, float& camera_y, const Player& player) {
+void center_camera(float& camera_x, float& camera_y,
+                   float& camera_follow_x, const Player& player) {
+    camera_follow_x = player.facing_left ? kCameraFollowLeft : kCameraFollowRight;
     camera_x = std::clamp(
-        player.x() - 48.0F,
+        std::floor(player.x()) - camera_follow_x,
         kCameraMinX,
         kCameraMaxX);
     camera_y = std::clamp(
-        player.y() - 76.0F,
+        std::floor(player.y()) - kCameraFollowY + 1.0F,
         kCameraMinY,
         kCameraMaxY);
 }
@@ -382,9 +431,9 @@ AnimationState choose_animation_state(const Player& player) {
     if (player.input_down && std::abs(player.ground_speed) < 0x100) {
         return AnimationState::LookDown;
     }
-    if (player.movement_input != 0 && player.ground_speed != 0 &&
-        ((player.movement_input > 0 && player.ground_speed < -0x300) ||
-         (player.movement_input < 0 && player.ground_speed > 0x300))) {
+    if (player.skid_ticks > 0 &&
+        player.movement_input != 0 &&
+        !input_matches_facing(player, player.movement_input)) {
         return AnimationState::Skid;
     }
     if (std::abs(player.ground_speed) > 0 ||
@@ -473,6 +522,7 @@ void reset_player(Player& player, const CollisionMask& collision) {
     player.animation_time = 0.0F;
     player.air_time = 0.0F;
     player.animation_frame = 0;
+    player.skid_ticks = 0;
 }
 
 int approach_fixed(int value, int target, int amount) {
@@ -480,6 +530,43 @@ int approach_fixed(int value, int target, int amount) {
         return std::min(value + amount, target);
     }
     return std::max(value - amount, target);
+}
+
+int facing_sign(const Player& player) {
+    return player.facing_left ? -1 : 1;
+}
+
+int ground_velocity_x(const Player& player) {
+    return facing_sign(player) * player.ground_speed;
+}
+
+bool input_matches_facing(const Player& player, int movement) {
+    return movement == facing_sign(player);
+}
+
+void flip_player_facing(Player& player) {
+    player.facing_left = !player.facing_left;
+}
+
+void spawn_skid_dust(Player& player) {
+    const int velocity_sign = player.velocity_x < 0 ? -1 : 1;
+    player.dust_puffs.push_back(DustPuff{
+        player.x() - static_cast<float>(velocity_sign * 10),
+        player.y() + 8.0F,
+        kSkidDustTicks,
+    });
+}
+
+void update_dust_puffs(Player& player) {
+    for (DustPuff& puff : player.dust_puffs) {
+        --puff.ticks;
+    }
+    player.dust_puffs.erase(
+        std::remove_if(
+            player.dust_puffs.begin(),
+            player.dust_puffs.end(),
+            [](const DustPuff& puff) { return puff.ticks <= 0; }),
+        player.dust_puffs.end());
 }
 
 void update_player(Player& player, const CollisionMask& collision,
@@ -491,21 +578,27 @@ void update_player(Player& player, const CollisionMask& collision,
     player.input_down = input_down;
 
     if (player.grounded) {
-        if (movement != 0 && !player.walking_active &&
-            player.ground_speed == 0) {
+        if (movement != 0) {
             player.walking_active = true;
-            player.velocity_x = 0;
-            player.velocity_y = 0;
-        } else if (movement > 0) {
-            player.walking_active = true;
-            player.ground_speed = std::min(
-                player.ground_speed + kGroundAcceleration, kGroundMaxSpeed);
-            player.facing_left = false;
-        } else if (movement < 0) {
-            player.walking_active = true;
-            player.ground_speed = std::max(
-                player.ground_speed - kGroundAcceleration, -kGroundMaxSpeed);
-            player.facing_left = true;
+            if (player.ground_speed == 0) {
+                player.facing_left = movement < 0;
+            }
+
+            if (input_matches_facing(player, movement)) {
+                player.ground_speed = std::min(
+                    player.ground_speed + kGroundAcceleration, kGroundMaxSpeed);
+            } else {
+                if (player.ground_speed > 0x300 && player.skid_ticks == 0) {
+                    player.skid_ticks = kSkidAnimationTicks;
+                    spawn_skid_dust(player);
+                }
+                player.ground_speed -= kGroundSkidDeceleration;
+                if (player.ground_speed < 0) {
+                    player.ground_speed = -player.ground_speed;
+                    flip_player_facing(player);
+                    player.skid_ticks = 0;
+                }
+            }
         } else {
             player.ground_speed =
                 approach_fixed(player.ground_speed, 0, kGroundFriction);
@@ -514,8 +607,11 @@ void update_player(Player& player, const CollisionMask& collision,
                 player.walking_active = false;
             }
         }
-        player.velocity_x = player.ground_speed;
+        player.velocity_x = ground_velocity_x(player);
         player.velocity_y = 0;
+        if (player.skid_ticks > 0) {
+            --player.skid_ticks;
+        }
     } else {
         if (movement > 0) {
             player.velocity_x = std::min(
@@ -530,7 +626,7 @@ void update_player(Player& player, const CollisionMask& collision,
 
     if (jump_pressed && player.grounded) {
         player.velocity_y = -kJumpImpulse;
-        player.velocity_x = player.ground_speed;
+        player.velocity_x = ground_velocity_x(player);
         player.grounded = false;
         player.walking_active = false;
         player.air_time = 0.0F;
@@ -576,7 +672,8 @@ void update_player(Player& player, const CollisionMask& collision,
             player.y_raw = static_cast<int>(
                 (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
             player.velocity_y = 0;
-            player.ground_speed = player.velocity_x;
+            player.facing_left = player.velocity_x < 0;
+            player.ground_speed = std::abs(player.velocity_x);
             player.grounded = true;
             player.walking_active = player.ground_speed != 0;
             player.air_time = 0.0F;
@@ -609,16 +706,23 @@ void update_player(Player& player, const CollisionMask& collision,
     if (!player.grounded) {
         player.air_time += 1.0F / 60.0F;
     }
+    update_dust_puffs(player);
 }
 
-void update_camera(float& camera_x, float& camera_y, const Player& player,
-                   float /*delta_seconds*/) {
+void update_camera(float& camera_x, float& camera_y, float& camera_follow_x,
+                   const Player& player) {
+    const float target_follow_x =
+        player.facing_left ? kCameraFollowLeft : kCameraFollowRight;
+    camera_follow_x = approach(
+        camera_follow_x, target_follow_x, kCameraFollowStep);
     const float target_x = std::clamp(
-        player.x() - (player.facing_left ? 112.0F : 48.0F),
+        std::floor(player.x()) - camera_follow_x,
         kCameraMinX,
         kCameraMaxX);
     const float target_y = std::clamp(
-        player.y() - 76.0F, kCameraMinY, kCameraMaxY);
+        std::floor(player.y()) - kCameraFollowY + 1.0F,
+        kCameraMinY,
+        kCameraMaxY);
     camera_x = target_x;
     camera_y = target_y;
 }
@@ -636,6 +740,7 @@ const SpriteFrame& select_animation_frame(
 }
 
 bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
+                  const AnimationSequence& skid_dust,
                   const SpriteFrame& sonic, const Player& player,
                   float camera_x, float camera_y, bool show_collision) {
     SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
@@ -655,6 +760,29 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
         SDL_SetTextureAlphaMod(collision, 160);
         if (!SDL_RenderTexture(app.renderer, collision, &source, nullptr)) {
             return fail("Unable to render collision overlay");
+        }
+    }
+
+    for (const DustPuff& puff : player.dust_puffs) {
+        if (!skid_dust.frames.empty()) {
+            const int age = kSkidDustTicks - puff.ticks;
+            const std::size_t frame_index = std::min<std::size_t>(
+                static_cast<std::size_t>(age / 2),
+                skid_dust.frames.size() - 1);
+            const SpriteFrame& dust = skid_dust.frames[frame_index].sprite;
+            SDL_FRect dust_destination{
+                std::floor(puff.x - camera_x),
+                std::floor(puff.y - camera_y),
+                dust.width,
+                dust.height,
+            };
+            if (!SDL_RenderTexture(
+                    app.renderer,
+                    dust.texture.value,
+                    nullptr,
+                    &dust_destination)) {
+                return fail("Unable to render ROM skid dust");
+            }
         }
     }
 
@@ -780,6 +908,11 @@ int main(int argc, char* argv[]) {
         load_animation_sequence(app.renderer, data_directory, "look_down", {4.0F, 4.0F, 4.0F}),
         load_animation_sequence(app.renderer, data_directory, "balance", {10.0F, 10.0F}),
     };
+    AnimationSequence skid_dust = load_effect_sequence(
+        app.renderer,
+        data_directory,
+        "skid_dust",
+        {2.0F, 2.0F, 2.0F, 2.0F});
     CollisionMask collision_mask = load_collision_mask(collision_mask_path);
     if (stage.value == nullptr || collision.value == nullptr ||
         !animation_sequence_loaded(sonic_animations.idle) ||
@@ -793,6 +926,7 @@ int main(int argc, char* argv[]) {
         !animation_sequence_loaded(sonic_animations.look_up) ||
         !animation_sequence_loaded(sonic_animations.look_down) ||
         !animation_sequence_loaded(sonic_animations.balance) ||
+        !animation_sequence_loaded(skid_dust) ||
         collision_mask.pixels.empty()) {
         return 1;
     }
@@ -801,11 +935,13 @@ int main(int argc, char* argv[]) {
     reset_player(player, collision_mask);
     float camera_x = 0.0F;
     float camera_y = 0.0F;
-    center_camera(camera_x, camera_y, player);
+    float camera_follow_x = kCameraFollowRight;
+    center_camera(camera_x, camera_y, camera_follow_x, player);
 
     if (smoke_test) {
         if (!render_frame(
                 app, stage.value, collision.value,
+                skid_dust,
                 sonic_animations.idle.frames[0].sprite, player,
                 camera_x, camera_y, true)) {
             return 1;
@@ -841,7 +977,7 @@ int main(int argc, char* argv[]) {
                     } else if (event.key.key == SDLK_R ||
                                event.key.key == SDLK_HOME) {
                         reset_player(player, collision_mask);
-                        center_camera(camera_x, camera_y, player);
+                        center_camera(camera_x, camera_y, camera_follow_x, player);
                     } else if (event.key.key == SDLK_SPACE ||
                                event.key.key == SDLK_Z) {
                         jump_pressed = true;
@@ -871,7 +1007,7 @@ int main(int argc, char* argv[]) {
                         show_collision = !show_collision;
                     } else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
                         reset_player(player, collision_mask);
-                        center_camera(camera_x, camera_y, player);
+                        center_camera(camera_x, camera_y, camera_follow_x, player);
                     }
                     break;
                 default:
@@ -924,13 +1060,13 @@ int main(int argc, char* argv[]) {
                 input_down);
             jump_pressed = false;
             update_animation(player, sonic_animations, kAnimationTickSeconds);
+            update_camera(camera_x, camera_y, camera_follow_x, player);
             simulation_accumulator -= kFixedFrameSeconds;
             ++simulation_steps;
         }
         if (simulation_steps == 4) {
             simulation_accumulator = 0.0F;
         }
-        update_camera(camera_x, camera_y, player, delta_seconds);
         const SpriteFrame& sonic_frame = select_animation_frame(
             player, sonic_animations);
 
@@ -952,6 +1088,7 @@ int main(int argc, char* argv[]) {
                 app,
                 stage.value,
                 collision.value,
+                skid_dust,
                 sonic_frame,
                 player,
                 camera_x,
