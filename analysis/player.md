@@ -19,6 +19,8 @@ integrators at `0x291606` and `0x291613`:
 | `+0x18` | `0x6720` | 2 | `ground_speed` | Signed scalar speed along the current surface. |
 | `+0x1A` | `0x6722` | 2 | `x_velocity` | Signed 8.8 horizontal velocity. |
 | `+0x1C` | `0x6724` | 2 | `y_velocity` | Signed 8.8 vertical velocity. |
+| `+0x36` | `0x673E` | 1 | `collision_radius_x` | Horizontal sensor radius; initialized to 7. |
+| `+0x37` | `0x673F` | 1 | `collision_radius_y` | Vertical sensor radius; 13 standing and 10 rolling. |
 
 `velocity_from_angle_and_speed` at `0x291494` indexes two signed lookup tables
 with `surface_angle`, multiplies both components by `ground_speed`, and returns
@@ -62,8 +64,42 @@ animation, and returns to standing when speed and input conditions permit.
 This confirms that the port can share a signed 8.8 velocity representation and
 an eight-bit angle system with the original player physics.
 
+## Spindash and roll
+
+The crouching path enters `player_enter_spindash_charge` at `0x399B98` when a
+new A or B press is detected. It plays sound command `0xA3`, selects the
+spindash animation, clears the charge word at task offset `+0x3C`, and changes
+the task function to `player_state_spindash_charge` at `0x399BB7`.
+
+While Down remains held, `update_spindash_charge` at `0x399B5E` decays the
+existing value by one thirty-second each frame. Each new A or B press adds
+`0x0200`, caps the value at `0x0800`, and retriggers sound `0xA3`. Releasing
+Down plays sound `0xA2`, indexes the launch-speed table at `0x3993BC`, writes
+the result to `ground_speed`, and enters rolling.
+
+`player_enter_roll` at `0x399F3B` selects the rolling collision shape before
+entering `player_state_roll` at `0x399F48`. The shape transition is explicit:
+
+- Standing uses radii 7 by 13.
+- Rolling uses radii 7 by 10 and shifts the integer Y position by three pixels
+  to keep the contact point stable.
+- Task flag `+0x0B` bit 2 records the rolling collision mode.
+
+The rolling state applies lower-friction ground physics, resolves surface
+collision, permits jumping, and returns to idle when speed drops below the
+exit threshold.
+
+## Collision overview
+
+Grounded movement converts `ground_speed` and `surface_angle` into X/Y
+velocity, advances the position, then calls the surface collision routines.
+Airborne movement follows a separate velocity-directed resolver. The detailed
+sensor pipeline and scratch layout are recorded in [collision.md](collision.md).
+
 ## Still to map
 
-The next player pass should assign names to the roll, hurt, death, and spring
-states, then determine collision sensor fields and the exact flag bits
-at offsets `+0x0B` and `+0x14`.
+The next player pass should assign names to the hurt, death, and spring states,
+then finish the exact meanings of the remaining movement flag bits. Task flag
+`+0x0B` bit 1 is strongly associated with airborne movement, while movement
+flag `+0x14` bit 7 controls facing and horizontal mirroring; runtime traces are
+still needed before marking every use as confirmed.
