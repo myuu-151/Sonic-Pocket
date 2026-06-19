@@ -6,5 +6,12 @@ address,name,confidence,notes
 0x200124,startup_sequence,probable,Calls a series of initialization routines
 0x20018D,frame_callback_20018D,unknown,Callback-like block reached from startup control flow
 0x20024E,initial_ram_table,probable,Copied to RAM at 0x6FB8 during startup
-0x3A59C4,vblank_restart_timer0_if_enabled,probable,Restarts TLCS-900H Timer 0 when the flag at 0x6E68 is nonzero
-0x006E68,timer0_restart_enabled,probable,Controls the Timer 0 restart performed during VBlank
+0x23BFE2,upload_sprite_state_to_vram,probable,Copies cached sprite attributes and optional palette numbers into K2GE VRAM
+0x23C572,bios_com_on_rts,probable,Invokes BIOS vector 0x15 VEC_COMONRTS when BIOS services are available
+0x23C583,bios_com_off_rts,probable,Invokes BIOS vector 0x16 VEC_COMOFFRTS when BIOS services are available
+0x23E17D,upload_palettes_if_dirty,probable,Uploads cached background and palette state to K2GE registers when marked dirty
+0x23E86A,upload_window_registers,probable,Copies cached window coordinates into K2GE window registers
+0x3A59C4,vblank_restart_timer0_if_enabled,probable,Restarts TLCS-900H Timer 0 when the flag at 0x68E8 is nonzero
+0x3F18FB,service_z80_command_queue,probable,Services the TLCS-900H to Z80 communication ring buffer
+0x3F1B67,advance_z80_command_queue,probable,Advances the Z80 command queue read index modulo 16
+0x0068E8,timer0_restart_enabled,probable,Controls the Timer 0 restart performed during VBlank

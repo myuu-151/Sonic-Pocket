@@ -61,10 +61,25 @@ to the local project with:
 .\scripts\apply-ghidra-symbols.ps1
 ```
 
+Selected functions can be decompiled headlessly without opening the GUI:
+
+```powershell
+.\scripts\decompile-ghidra-targets.ps1 `
+    -Addresses @('0x2000A0', '0x3F18FB') `
+    -Output .\out\frame-routines.c
+```
+
+Addresses should be quoted so PowerShell passes the hexadecimal text through
+unchanged. The generated C is evidence for analysis, not native-port source,
+and stays under the ignored `out/` directory.
+
 ## First analysis targets
 
-1. Confirm startup and work-RAM initialization from `0x200040`.
-2. Determine which interrupt reaches the handler at `0x2000A0`.
-3. Label the callbacks reached by the startup sequence at `0x200124`.
-4. Identify joypad reads, K2GE writes, and frame synchronization.
-5. Record every confirmed address in `analysis/symbols.csv`.
+Startup and the VBlank handler are now anchored; see
+[`analysis/vblank.md`](../analysis/vblank.md). The next targets are:
+
+1. Locate and label the controller-status reads.
+2. Identify the main mode/state dispatcher called by the frame loop.
+3. Trace camera coordinates into the VBlank scroll and tile-map uploads.
+4. Map the object update loop and Sonic's player-state structure.
+5. Record every supported address in `analysis/symbols.csv`.

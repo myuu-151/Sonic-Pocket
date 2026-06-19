@@ -11,6 +11,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
 
 public class ImportSymbolsCsv extends GhidraScript {
@@ -43,6 +44,18 @@ public class ImportSymbolsCsv extends GhidraScript {
             String confidence = fields[2].trim();
             Address address = toAddr(offset);
             Function function = currentProgram.getFunctionManager().getFunctionAt(address);
+
+            // Keep the CSV authoritative when a corrected address moves a
+            // human-authored symbol. Analysis/imported symbols are left alone.
+            SymbolIterator sameNameSymbols = symbolTable.getSymbols(name);
+            while (sameNameSymbols.hasNext()) {
+                Symbol existing = sameNameSymbols.next();
+                if (!existing.getAddress().equals(address) &&
+                    existing.getSource() == SourceType.USER_DEFINED) {
+                    println("Removing stale symbol " + existing.getAddress() + " -> " + name);
+                    existing.delete();
+                }
+            }
 
             if (function != null) {
                 if (!function.getName().equals(name)) {
