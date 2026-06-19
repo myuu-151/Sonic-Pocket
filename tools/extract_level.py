@@ -407,13 +407,39 @@ def render_sprite(
     for sprite_data, palette_id in layers:
         if len(sprite_data) < 2:
             raise ValueError("sprite definition is truncated")
-        count = sprite_data[0]
-        if 2 + count * 4 > len(sprite_data):
-            raise ValueError("sprite tile list is truncated")
-        for index in range(count):
-            offset = 2 + index * 4
+        tile_count = int.from_bytes(sprite_data[:2], "little")
+        offset = 2
+        tiles_read = 0
+        while tiles_read < tile_count:
+            if offset + 4 > len(sprite_data):
+                raise ValueError("sprite tile list is truncated")
             tile_id = int.from_bytes(sprite_data[offset : offset + 2], "little")
             if tile_id == 0xFFFF:
+                if offset + 8 > len(sprite_data):
+                    raise ValueError("sprite vertical tile list is truncated")
+                vertical_count = int.from_bytes(
+                    sprite_data[offset + 2 : offset + 4], "little"
+                )
+                first_tile_id = int.from_bytes(
+                    sprite_data[offset + 4 : offset + 6], "little"
+                )
+                x = int.from_bytes(
+                    sprite_data[offset + 6 : offset + 7], "little", signed=True
+                )
+                y = int.from_bytes(
+                    sprite_data[offset + 7 : offset + 8], "little", signed=True
+                )
+                for tile_offset in range(vertical_count):
+                    entries.append(
+                        (
+                            palette_id,
+                            first_tile_id + tile_offset,
+                            x,
+                            y + tile_offset * 8,
+                        )
+                    )
+                tiles_read += vertical_count
+                offset += 8
                 continue
             x = int.from_bytes(
                 sprite_data[offset + 2 : offset + 3], "little", signed=True
@@ -422,7 +448,11 @@ def render_sprite(
                 sprite_data[offset + 3 : offset + 4], "little", signed=True
             )
             entries.append((palette_id, tile_id, x, y))
+            tiles_read += 1
+            offset += 4
 
+    if not entries:
+        raise ValueError("sprite contains no drawable entries")
     min_x = min(x for _, _, x, _ in entries)
     min_y = min(y for _, _, _, y in entries)
     max_x = max(x + 8 for _, _, x, _ in entries)
@@ -504,11 +534,27 @@ def parse_player_sprite_list(reference_directory: Path) -> list[tuple[int, int]]
 def sprite_definition_size(sprite_data: bytes, offset: int) -> int:
     if offset + 2 > len(sprite_data):
         raise ValueError(f"sprite definition 0x{offset:04X} is outside sprite data")
-    count = sprite_data[offset]
-    size = 2 + count * 4
-    if offset + size > len(sprite_data):
-        raise ValueError(f"sprite definition 0x{offset:04X} is truncated")
-    return size
+    tile_count = int.from_bytes(sprite_data[offset : offset + 2], "little")
+    cursor = offset + 2
+    tiles_read = 0
+    while tiles_read < tile_count:
+        if cursor + 4 > len(sprite_data):
+            raise ValueError(f"sprite definition 0x{offset:04X} is truncated")
+        tile_id = int.from_bytes(sprite_data[cursor : cursor + 2], "little")
+        if tile_id == 0xFFFF:
+            if cursor + 8 > len(sprite_data):
+                raise ValueError(
+                    f"sprite vertical run in 0x{offset:04X} is truncated"
+                )
+            vertical_count = int.from_bytes(
+                sprite_data[cursor + 2 : cursor + 4], "little"
+            )
+            tiles_read += vertical_count
+            cursor += 8
+        else:
+            tiles_read += 1
+            cursor += 4
+    return cursor - offset
 
 
 def render_player_sprite(
