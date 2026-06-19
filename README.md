@@ -1,7 +1,7 @@
 # Sonic Pocket
 
-A clean-room reverse-engineering and native PC port project for *Sonic the
-Hedgehog: Pocket Adventure*.
+A reverse-engineered native PC reimplementation of *Sonic the Hedgehog: Pocket
+Adventure*.
 
 ## Status
 

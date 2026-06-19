@@ -1,0 +1,12 @@
+diff --git a/tlcs900_disasm.c b/tlcs900_disasm.c
+index 745dd18..5c2f9bd 100644
+--- a/tlcs900_disasm.c
++++ b/tlcs900_disasm.c
+@@ -3,6 +3,7 @@
+ //
+ 
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <errno.h>
+ #include "tlcs900d.h"
+ 

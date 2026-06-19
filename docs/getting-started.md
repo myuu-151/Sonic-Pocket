@@ -50,8 +50,12 @@ For a quick entry-point listing, build
 .\scripts\disassemble-entry.ps1 -Disassembler C:\path\to\ngd.exe
 ```
 
+When building NGDis with 64-bit MSVC, first apply
+`patches/ngdis-msvc.patch`; it adds the missing `stdlib.h` declaration needed
+to keep `malloc` from being treated as a 32-bit integer.
+
 Generated listings go under `out/` and are intentionally ignored. Commit only
-human-authored symbols, notes, and clean-room source—not ROMs or bulk generated
+human-authored symbols, notes, and reimplementation source—not ROMs or bulk generated
 assembly.
 
 After updating `analysis/symbols.csv`, close the Ghidra GUI and apply the names
@@ -72,6 +76,13 @@ Selected functions can be decompiled headlessly without opening the GUI:
 Addresses should be quoted so PowerShell passes the hexadecimal text through
 unchanged. The generated C is evidence for analysis, not native-port source,
 and stays under the ignored `out/` directory.
+
+Ghidra references and defined listing ranges can also be exported headlessly:
+
+```powershell
+.\scripts\find-ghidra-references.ps1 -Addresses @('0x6F82')
+.\scripts\export-ghidra-listing.ps1 -Ranges @('0x23C340', '0x23C3A0')
+```
 
 ## First analysis targets
 

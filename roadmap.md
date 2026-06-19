@@ -1,7 +1,7 @@
 # Project roadmap
 
 The goal is a faithful native PC port of *Sonic the Hedgehog: Pocket
-Adventure*, developed through reproducible clean-room analysis. An emulated PC
+Adventure*, developed through reproducible binary analysis. An emulated PC
 shell may be used as an intermediate milestone, but the final engine should
 replace original game logic with maintainable native code.
 
