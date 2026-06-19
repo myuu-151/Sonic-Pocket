@@ -40,7 +40,8 @@ Or build and run in one step:
 - Arrow keys or WASD: move the camera
 - Shift: faster camera movement
 - C: toggle the collision overlay
-- Home: recenter on Sonic's original stage start position
+- R: recenter on Sonic's original stage start position
+- 1 through 6: set exact integer window scale
 - Escape: quit
 
 Gamepads are supported too:

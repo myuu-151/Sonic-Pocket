@@ -11,6 +11,7 @@ namespace {
 
 constexpr int kLogicalWidth = 160;
 constexpr int kLogicalHeight = 152;
+constexpr int kDefaultWindowScale = 3;
 constexpr int kStageWidth = 6400;
 constexpr int kStageHeight = 992;
 constexpr float kPlayerStartX = 112.0F;
@@ -115,6 +116,19 @@ void center_camera(float& camera_x, float& camera_y) {
         kPlayerStartY - static_cast<float>(kLogicalHeight) / 2.0F,
         0.0F,
         static_cast<float>(kStageHeight - kLogicalHeight));
+}
+
+bool set_window_scale(SDL_Window* window, int scale) {
+    if (scale < 1 || scale > 6) {
+        return true;
+    }
+    const int width = kLogicalWidth * scale;
+    const int height = kLogicalHeight * scale;
+    if (!SDL_SetWindowSize(window, width, height)) {
+        return fail("Unable to set window size");
+    }
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    return true;
 }
 
 float normalized_axis(Sint16 value) {
@@ -226,8 +240,8 @@ int main(int argc, char* argv[]) {
         smoke_test ? SDL_WINDOW_HIDDEN : SDL_WINDOW_RESIZABLE;
     if (!SDL_CreateWindowAndRenderer(
             "Sonic Pocket - Native Stage Viewer",
-            kLogicalWidth * 4,
-            kLogicalHeight * 4,
+            kLogicalWidth * kDefaultWindowScale,
+            kLogicalHeight * kDefaultWindowScale,
             flags,
             &app.window,
             &app.renderer)) {
@@ -283,8 +297,16 @@ int main(int argc, char* argv[]) {
                         running = false;
                     } else if (event.key.key == SDLK_C) {
                         show_collision = !show_collision;
-                    } else if (event.key.key == SDLK_HOME) {
+                    } else if (event.key.key == SDLK_R ||
+                               event.key.key == SDLK_HOME) {
                         center_camera(camera_x, camera_y);
+                    } else if (event.key.key >= SDLK_1 &&
+                               event.key.key <= SDLK_6) {
+                        if (!set_window_scale(
+                                app.window,
+                                static_cast<int>(event.key.key - SDLK_0))) {
+                            return 1;
+                        }
                     }
                     break;
                 case SDL_EVENT_GAMEPAD_ADDED:
