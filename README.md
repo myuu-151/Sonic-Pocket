@@ -11,6 +11,8 @@ understood, and the TLCS-900/H entry point at `0x200040` has been decoded.
 The current milestone is to map startup, interrupts, the frame loop, and the
 major engine subsystems before translating gameplay code.
 
+See the [project roadmap](roadmap.md) for phases, progress, and exit criteria.
+
 ## Quick start
 
 Place a legally obtained ROM in the local `Rom/` directory, then run:
