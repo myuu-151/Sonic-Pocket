@@ -31,7 +31,7 @@ constexpr float kCameraMinY = 64.0F;
 constexpr float kCameraMaxX = static_cast<float>(kStageWidth - 224);
 constexpr float kCameraMaxY = static_cast<float>(kStageHeight - 216);
 constexpr float kPlayerStartX = 112.0F;
-constexpr float kPlayerHalfWidth = 6.0F;
+constexpr float kPlayerHalfWidth = 7.0F;
 constexpr float kPlayerHalfHeight = 13.0F;
 constexpr float kAnimationAirThreshold = 0.06F;
 constexpr Sint16 kGamepadDeadzone = 8000;
@@ -53,7 +53,7 @@ constexpr int kSkidDustTicks = 8;
 constexpr int kSkidDustSpawnInterval = 6;
 constexpr float kSkidDustFootOffsetY = 11.0F;
 constexpr int kPeeloutSpeed = kGroundMaxSpeed;
-constexpr int kAirAcceleration = 0x10;
+constexpr int kAirAcceleration = 0x40;
 constexpr int kAirMaxXSpeed = 0x800;
 constexpr int kGravity = 0x80;
 constexpr int kFallMaxSpeed = 0xF00;
@@ -63,6 +63,12 @@ constexpr float kCameraFollowRight = 48.0F;
 constexpr float kCameraFollowLeft = 112.0F;
 constexpr float kCameraFollowY = 76.0F;
 constexpr float kCameraFollowStep = 2.0F;
+// The ROM keeps the player center roughly 0x4c pixels from the active camera
+// left edge.  Runtime traces for NSI1 show the camera carrying a 0x31
+// sub-pixel residue at the start of the stage, so clamp against the same raw
+// fixed-point boundary instead of deriving the player bound from the PC
+// camera's visual left edge.
+constexpr int kRomPlayerLeftBoundaryRaw = 0x4C31;
 
 struct Texture {
     SDL_Texture* value = nullptr;
@@ -150,18 +156,29 @@ struct DustPuff {
 struct CollisionResponse {
     int response = 0;
     int angle = 0;
+    int collision_type = 0;
+    int local_x = 0;
+    int local_y = 0;
 };
 
 struct RomCollisionHit {
     bool hit = false;
     int delta_y = 0;
     int angle = 0;
+    int response = 0;
+    int collision_type = 0;
+    int local_x = 0;
+    int local_y = 0;
 };
 
 struct RomHorizontalHit {
     bool hit = false;
     int delta_x = 0;
     int angle = 0;
+    int response = 0;
+    int collision_type = 0;
+    int local_x = 0;
+    int local_y = 0;
 };
 
 struct Player {
@@ -170,9 +187,15 @@ struct Player {
     int ground_speed = 0;
     int velocity_x = 0;
     int velocity_y = 0;
+    int previous_x_raw = static_cast<int>(kPlayerStartX * kFixedOne);
+    int previous_y_raw = 0;
+    int body_half_width = 7;
+    int body_half_height = 13;
+    int collision_plane = 1;
     bool grounded = false;
     bool facing_left = false;
     bool jump_held = false;
+    bool pending_jump = false;
     bool jump_release_limited = false;
     bool walking_active = false;
     int movement_input = 0;
@@ -287,7 +310,7 @@ struct CollisionMask {
         const int table_index = local_y * 8 + (7 - local_x);
         const int response = read_s8(
             collision_defs[def_offset + 2 + 64 + table_index]);
-        return CollisionResponse{response, angle};
+        return CollisionResponse{response, angle, collision_type, local_x, local_y};
     }
 
     std::optional<CollisionResponse> horizontal_response(int x, int y) const {
@@ -337,7 +360,7 @@ struct CollisionMask {
         const int table_index = local_y * 8 + (7 - local_x);
         const int response = read_s8(
             collision_defs[def_offset + 2 + table_index]);
-        return CollisionResponse{response, angle};
+        return CollisionResponse{response, angle, collision_type, local_x, local_y};
     }
 
     int first_solid_y(int x, int start_y, int end_y) const {
@@ -636,7 +659,7 @@ std::string_view animation_state_name(AnimationState state) {
 }
 
 AnimationState choose_animation_state(const Player& player) {
-    if (!player.grounded && player.air_time >= kAnimationAirThreshold) {
+    if (!player.grounded) {
         return player.velocity_y < 0 ? AnimationState::Jump : AnimationState::Fall;
     }
     if (player.input_up && std::abs(player.ground_speed) < 0x100) {
@@ -758,6 +781,14 @@ int ground_speed_magnitude(const Player& player) {
     return std::abs(player.ground_speed);
 }
 
+double player_render_angle_degrees(const Player& player) {
+    int angle = player.ground_angle & 0xFF;
+    if (angle >= 0x80) {
+        angle -= 0x100;
+    }
+    return -static_cast<double>(angle) * 360.0 / 256.0;
+}
+
 constexpr int kRomSineVals[] = {
     0, 6, 12, 18, 25, 31, 37, 43,
     49, 56, 62, 68, 74, 80, 86, 92,
@@ -848,6 +879,53 @@ int ground_velocity_x(const Player& player) {
         --velocity;
     }
     return velocity;
+}
+
+int sign_extend_8(int value) {
+    value &= 0xFF;
+    return value >= 0x80 ? value - 0x100 : value;
+}
+
+int rom_vector_angle_from_speed(int velocity_x, int velocity_y) {
+    if (velocity_x == 0 && velocity_y == 0) {
+        return 0;
+    }
+    constexpr double kPi = 3.14159265358979323846;
+    const double radians = std::atan2(
+        static_cast<double>(velocity_y),
+        static_cast<double>(velocity_x));
+    return static_cast<int>(std::lround(radians * 128.0 / kPi)) & 0xFF;
+}
+
+int rom_sub_39abec_landing_speed(
+    int velocity_x, int velocity_y, int ground_angle, bool facing_left) {
+    // Port of the player landing X/Y-speed -> ground-speed projection in
+    // sub_39ABEC.  This keeps ramp landings from preserving full air X-speed
+    // when the ROM would halve/project it onto the slope.
+    const int vector_angle =
+        rom_vector_angle_from_speed(velocity_x, -velocity_y);
+    const int angle = ground_angle & 0xFF;
+    int ground_speed = std::abs(velocity_x);
+
+    if (((angle + 0x10) & 0xFF) >= 0x20) {
+        ground_speed = std::max(ground_speed, std::abs(velocity_y));
+
+        const int vector_to_ground =
+            sign_extend_8(angle - 0x40 - vector_angle);
+        if (vector_to_ground == 0) {
+            ground_speed = 0;
+        } else if (vector_to_ground < 0x20 && vector_to_ground > -0x20) {
+            ground_speed >>= 1;
+        }
+    }
+
+    if (sign_extend_8(angle - 0x40 - vector_angle) >= 0) {
+        ground_speed = -ground_speed;
+    }
+    if (facing_left) {
+        ground_speed = -ground_speed;
+    }
+    return ground_speed;
 }
 
 void rom_plr_calc_xy_speed(Player& player) {
@@ -1109,6 +1187,10 @@ RomHorizontalHit rom_bg_coll_chk1(
                     true,
                     sample->response + offset,
                     sample->angle,
+                    sample->response,
+                    sample->collision_type,
+                    sample->local_x,
+                    sample->local_y,
                 };
             }
         }
@@ -1132,6 +1214,10 @@ RomHorizontalHit rom_bg_coll_chk2(
                     true,
                     sample->response + offset,
                     sample->angle,
+                    sample->response,
+                    sample->collision_type,
+                    sample->local_x,
+                    sample->local_y,
                 };
             }
         }
@@ -1155,6 +1241,10 @@ RomCollisionHit rom_bg_coll_chk4(
                     true,
                     sample->response + offset,
                     sample->angle,
+                    sample->response,
+                    sample->collision_type,
+                    sample->local_x,
+                    sample->local_y,
                 };
             }
         }
@@ -1178,6 +1268,10 @@ RomCollisionHit rom_bg_coll_chk3(
                     true,
                     sample->response + offset,
                     sample->angle,
+                    sample->response,
+                    sample->collision_type,
+                    sample->local_x,
+                    sample->local_y,
                 };
             }
         }
@@ -1216,6 +1310,10 @@ RomCollisionHit rom_bg_coll_chk4_window(
             true,
             sample->response + offset,
             sample->angle,
+            sample->response,
+            sample->collision_type,
+            sample->local_x,
+            sample->local_y,
         };
         if (!best.hit || std::abs(candidate.delta_y) < std::abs(best.delta_y)) {
             best = candidate;
@@ -1225,7 +1323,11 @@ RomCollisionHit rom_bg_coll_chk4_window(
 }
 
 RomCollisionHit choose_bg_coll_chk4_retain_pair(
-    const CollisionMask& collision, int center_x, int rom_y, int scan_length) {
+    const CollisionMask& collision,
+    int center_x,
+    int rom_y,
+    int scan_length,
+    int current_angle = -1) {
     const RomCollisionHit right = rom_bg_coll_chk4_window(
         collision,
         center_x + kSlopeProbeRadius,
@@ -1243,6 +1345,14 @@ RomCollisionHit choose_bg_coll_chk4_retain_pair(
     }
     if (!right.hit) {
         return left;
+    }
+    if (left.delta_y == right.delta_y && current_angle >= 0) {
+        const int angle = current_angle & 0xFF;
+        const bool left_matches = (left.angle & 0xFF) == angle;
+        const bool right_matches = (right.angle & 0xFF) == angle;
+        if (left_matches != right_matches) {
+            return left_matches ? left : right;
+        }
     }
     return left.delta_y >= right.delta_y ? left : right;
 }
@@ -1332,6 +1442,8 @@ bool apply_rom_vertical_ground_pair(
     const CollisionMask& collision,
     int scan_y_length,
     bool retain_ground) {
+    (void)scan_y_length;
+    constexpr int kRomWalkGroundScanLength = 9;
     const int center_x = player.x_raw / kFixedOne;
     const int center_y = player.y_raw / kFixedOne;
     const int rom_center_y = view_y_to_rom_y(center_y);
@@ -1341,11 +1453,16 @@ bool apply_rom_vertical_ground_pair(
     RomCollisionHit floor_hit =
         retain_ground ?
             choose_bg_coll_chk4_retain_pair(
-                collision, center_x, rom_floor_probe_y, scan_y_length) :
+                collision,
+                center_x,
+                rom_floor_probe_y,
+                kRomWalkGroundScanLength,
+                player.ground_angle) :
             choose_bg_coll_chk4_pair(
-                collision, center_x, rom_floor_probe_y, scan_y_length);
+                collision, center_x, rom_floor_probe_y, kRomWalkGroundScanLength);
     const RomCollisionHit ceiling_hit =
-        choose_bg_coll_chk3_pair(collision, center_x, rom_ceiling_probe_y, scan_y_length);
+        choose_bg_coll_chk3_pair(
+            collision, center_x, rom_ceiling_probe_y, kRomWalkGroundScanLength);
 
     if (floor_hit.hit == ceiling_hit.hit) {
         if (!floor_hit.hit) {
@@ -1355,29 +1472,40 @@ bool apply_rom_vertical_ground_pair(
         floor_hit = ceiling_hit;
     }
 
-    const int previous_ground_angle = player.ground_angle & 0xFF;
-    if (
-        previous_ground_angle == 0 &&
-        player.velocity_y == 0 &&
-        player.velocity_x >= 0 &&
-        floor_hit.angle > 0 &&
-        floor_hit.angle < 0x40 &&
-        floor_hit.delta_y < 0) {
-        floor_hit.angle = 0;
-        floor_hit.delta_y = 0;
-    }
-
     if (rom_angle_delta_abs(floor_hit.angle, player.ground_angle) >= 0x40) {
         return false;
     }
 
+    const int previous_ground_angle = player.ground_angle & 0xFF;
     int ground_delta_y = floor_hit.delta_y;
     if (ground_delta_y > 0) {
         --ground_delta_y;
+        if (
+            floor_hit.angle > 0 &&
+            floor_hit.angle < 0x10 &&
+            floor_hit.delta_y == 1 &&
+            floor_hit.response >= 6 &&
+            floor_hit.local_x == 0) {
+            ground_delta_y = 1;
+        }
     } else if (ground_delta_y < 0 && player.velocity_y < 0) {
         const int uphill_bias =
             floor_hit.angle >= 0x10 && floor_hit.angle < 0x40 ? 4 : 2;
         ground_delta_y = std::clamp(ground_delta_y + uphill_bias, -1, 1);
+        if (
+            floor_hit.angle > 0 &&
+            floor_hit.angle < 0x10 &&
+            floor_hit.delta_y == -1 &&
+            floor_hit.response >= 4) {
+            ground_delta_y = (floor_hit.response & 1) == 0 ? -1 : 0;
+        }
+        if (
+            previous_ground_angle > 0 &&
+            previous_ground_angle < 0x20 &&
+            floor_hit.angle == 0 &&
+            floor_hit.delta_y <= -3) {
+            ground_delta_y = -2;
+        }
     }
     if (
         ground_delta_y == 0 &&
@@ -1397,26 +1525,13 @@ bool apply_rom_vertical_ground_pair(
         player.velocity_y == 0 &&
         previous_ground_angle == 0 &&
         (floor_hit.angle & 0xFF) >= 0xC0) {
-        ground_delta_y = player.velocity_x < 0 ? 1 : 0;
+        ground_delta_y = player.velocity_x < 0 ? 2 : 0;
     }
     if (
         ground_delta_y < -1 &&
         player.velocity_y > 0 &&
         (floor_hit.angle & 0xFF) >= 0xC0) {
         ground_delta_y = std::clamp(ground_delta_y + 2, -1, 1);
-    }
-    if (
-        floor_hit.delta_y > 0 &&
-        player.velocity_y > 0 &&
-        (floor_hit.angle & 0xFF) >= 0xC0) {
-        ground_delta_y = std::clamp(floor_hit.delta_y, -1, 1);
-    }
-    if (
-        floor_hit.delta_y == -1 &&
-        player.velocity_y > 0 &&
-        (floor_hit.angle & 0xFF) >= 0xC0 &&
-        rom_floor_probe_y <= 426) {
-        ground_delta_y = 1;
     }
     if (
         ground_delta_y < 0 &&
@@ -1429,32 +1544,45 @@ bool apply_rom_vertical_ground_pair(
         previous_ground_angle == 0 &&
         player.velocity_y == 0 &&
         floor_hit.delta_y == 0 &&
+        floor_hit.angle > 0 &&
+        floor_hit.angle < 0x10 &&
+        player.velocity_x > 0) {
+        ground_delta_y = -1;
+    }
+    if (
+        previous_ground_angle == 0 &&
+        player.velocity_y == 0 &&
+        floor_hit.delta_y == 1 &&
+        floor_hit.angle > 0 &&
+        floor_hit.angle < 0x10 &&
+        player.velocity_x > 0) {
+        ground_delta_y = 1;
+    }
+    if (
+        previous_ground_angle == 0 &&
+        player.velocity_y == 0 &&
+        floor_hit.delta_y == 0 &&
         floor_hit.angle >= 0x10 &&
         floor_hit.angle < 0x40) {
         ground_delta_y = 4;
     }
+    const int next_ground_angle = floor_hit.angle & 0xFF;
     if (
-        previous_ground_angle == 0x13 &&
-        floor_hit.angle == 0x2D &&
-        player.velocity_x > 0) {
-        player.x_raw -= 3 * kFixedOne;
-        ground_delta_y += 3;
+        previous_ground_angle > 0 &&
+        previous_ground_angle < 0x40 &&
+        next_ground_angle > previous_ground_angle &&
+        next_ground_angle < 0x40 &&
+        player.velocity_x > 0 &&
+        player.velocity_y < 0) {
+        const int transition_adjust =
+            std::clamp((next_ground_angle - previous_ground_angle) / 8, 1, 3);
+        player.x_raw -= transition_adjust * kFixedOne;
+        ground_delta_y += transition_adjust;
     }
     if (
-        previous_ground_angle == 0x13 &&
+        previous_ground_angle > 0 &&
+        previous_ground_angle < 0x20 &&
         floor_hit.angle == 0 &&
-        player.velocity_x < 0) {
-        player.y_raw -= kFixedOne;
-    }
-    if (
-        previous_ground_angle == 0x0A &&
-        floor_hit.angle == 0 &&
-        player.velocity_x < 0) {
-        player.y_raw -= kFixedOne;
-    }
-    if (
-        previous_ground_angle == 0 &&
-        (floor_hit.angle & 0xFF) == 0xF6 &&
         player.velocity_x < 0) {
         player.y_raw -= kFixedOne;
     }
@@ -1467,13 +1595,13 @@ bool apply_rom_vertical_ground_pair(
             collision,
             center_x - kSlopeProbeRadius,
             rom_floor_probe_y,
-            scan_y_length).delta_y);
+            kRomWalkGroundScanLength).delta_y);
     const int right_surface = rom_y_to_view_y(
         rom_floor_probe_y + rom_bg_coll_chk4(
             collision,
             center_x + kSlopeProbeRadius,
             rom_floor_probe_y,
-            scan_y_length).delta_y);
+            kRomWalkGroundScanLength).delta_y);
     player.ground_slope =
         static_cast<float>(right_surface - left_surface) /
         static_cast<float>(kSlopeProbeRadius * 2);
@@ -1519,29 +1647,33 @@ void apply_rom_walk_collision(
                 0x10);
         }
         if (side.hit && side.delta_x != 0) {
-            if ((player.ground_angle & 0xFF) == 0x29 && side.angle == 0x2D) {
-                player.x_raw -= side.delta_x * kFixedOne;
-                player.ground_angle = side.angle;
-                return;
-            }
             if (
-                (player.ground_angle & 0xFF) == 0x2D &&
-                side.angle == 0x2D &&
-                player.velocity_x < 0) {
-                player.x_raw += 2 * kFixedOne;
-                return;
-            }
-            if (
-                (player.ground_angle & 0xFF) == 0x2D &&
-                side.angle == 0x13 &&
-                player.velocity_x < 0) {
+                player.velocity_x < 0 &&
+                (player.ground_angle & 0xFF) >= 0x20 &&
+                (player.ground_angle & 0xFF) < 0x40 &&
+                side.angle > 0 &&
+                side.angle < 0x20) {
                 player.x_raw += side.delta_x * kFixedOne;
                 player.x_raw -= 0x330;
                 player.y_raw -= 2 * kFixedOne;
                 player.ground_angle = side.angle;
                 return;
             }
-            if ((player.ground_angle & 0xFF) == 0x2D && side.angle == 0x40) {
+            if (
+                player.velocity_x < 0 &&
+                (player.ground_angle & 0xFF) >= 0x20 &&
+                (player.ground_angle & 0xFF) < 0x40 &&
+                side.angle >= 0x20 &&
+                side.angle < 0x40) {
+                player.x_raw += kFixedOne;
+                player.ground_angle = side.angle;
+                return;
+            }
+            if (
+                side.angle == 0x40 &&
+                player.velocity_x > 0 &&
+                (player.ground_angle & 0xFF) > 0x20 &&
+                (player.ground_angle & 0xFF) < 0x40) {
                 player.x_raw += std::max(side.delta_x, -3) * kFixedOne;
                 player.x_raw -= 0x36;
                 player.ground_angle = side.angle;
@@ -1578,6 +1710,39 @@ void apply_rom_walk_collision(
 
     if (sector == 0x00 || sector == 0x80) {
         if (apply_rom_vertical_ground_pair(player, collision, scan_y_length, retain_ground)) {
+            if ((player.ground_angle & 0xFF) == 0 && player.velocity_x < 0) {
+                const int center_x = player.x_raw / kFixedOne;
+                const int center_y = player.y_raw / kFixedOne;
+                const int rom_center_y = view_y_to_rom_y(center_y);
+                const RomHorizontalHit side =
+                    choose_bg_coll_chk2_pair(
+                        collision,
+                        center_x - kSlopeProbeRadius,
+                        rom_center_y,
+                        scan_x_length);
+                if (side.hit && side.delta_x != 0) {
+                    player.x_raw += side.delta_x * kFixedOne;
+                    player.ground_speed = 0;
+                    player.velocity_x = 0;
+                    player.walking_active = false;
+                }
+            } else if ((player.ground_angle & 0xFF) == 0 && player.velocity_x > 0) {
+                const int center_x = player.x_raw / kFixedOne;
+                const int center_y = player.y_raw / kFixedOne;
+                const int rom_center_y = view_y_to_rom_y(center_y);
+                const RomHorizontalHit side =
+                    choose_bg_coll_chk1_pair(
+                        collision,
+                        center_x + kSlopeProbeRadius,
+                        rom_center_y,
+                        scan_x_length);
+                if (side.hit && side.delta_x != 0) {
+                    player.x_raw += side.delta_x * kFixedOne;
+                    player.ground_speed = 0;
+                    player.velocity_x = 0;
+                    player.walking_active = false;
+                }
+            }
             return;
         }
 
@@ -1687,7 +1852,6 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
         }
         player.x_raw += (selected.delta_x + 8) * kFixedOne;
         player.ground_angle = selected.angle;
-        player.velocity_x = 0;
         return true;
     }
 
@@ -1717,7 +1881,6 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
         }
         player.y_raw -= (selected.delta_y + 8) * kFixedOne;
         player.ground_angle = selected.angle;
-        player.velocity_y = 0;
         return true;
     }
 
@@ -1740,7 +1903,6 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
         }
         player.x_raw += (selected.delta_x - 8) * kFixedOne;
         player.ground_angle = selected.angle;
-        player.velocity_x = 0;
         return true;
     }
 
@@ -1786,7 +1948,6 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
     const int rom_delta_y = selected.delta_y - 8;
     player.y_raw -= rom_delta_y * kFixedOne;
     player.ground_angle = selected.angle;
-    player.velocity_y = 0;
     player.air_time = 0.0F;
     return true;
 }
@@ -1844,16 +2005,88 @@ bool rom_has_ground_support(const Player& player, const CollisionMask& collision
         center_x - kSlopeProbeRadius,
         rom_floor_probe_y,
         kRomNoGroundScanLength);
-    if ((right.hit && right.delta_y != 0) || (left.hit && left.delta_y != 0)) {
-        return true;
+    return (right.hit && right.delta_y != 0) || (left.hit && left.delta_y != 0);
+}
+
+bool rom_should_leave_ground_at_low_speed(const Player& player) {
+    const int angle_window = ((player.ground_angle & 0xFF) - 0x40) & 0xFF;
+    if (angle_window > 0x80) {
+        return false;
+    }
+    return ground_speed_magnitude(player) < 0x100;
+}
+
+void rom_rotate_player_angle_to_zero(Player& player) {
+    int angle = player.ground_angle & 0xFF;
+    if (angle == 0) {
+        return;
     }
 
-    const RomCollisionHit center = rom_bg_coll_chk4(
-        collision,
-        center_x,
-        rom_floor_probe_y,
-        kRomNoGroundScanLength);
-    return center.hit && center.delta_y != 0;
+    int signed_angle = angle;
+    if (signed_angle >= 0x80) {
+        signed_angle -= 0x100;
+    }
+
+    if (signed_angle > 0) {
+        signed_angle = std::max(0, signed_angle - 4);
+    } else {
+        signed_angle = std::min(0, signed_angle + 4);
+    }
+    player.ground_angle = signed_angle & 0xFF;
+}
+
+void rom_leave_ground(Player& player) {
+    player.grounded = false;
+    player.jump_release_limited = false;
+    player.walking_active = false;
+}
+
+void rom_plr_air_drag(Player& player, int movement) {
+    // Port of PlrAirDrag.  Air control approaches +/-0x800, but if slope or
+    // ground momentum already pushed X-speed past that cap the ROM preserves
+    // that over-cap speed instead of clamping it down in one frame.
+    const int max_air_speed = kAirMaxXSpeed;
+    const int accel = kAirAcceleration;
+
+    if (movement > 0) {
+        player.facing_left = false;
+        int next_velocity = player.velocity_x + accel;
+        if (next_velocity > max_air_speed) {
+            const int previous_velocity = next_velocity - accel;
+            next_velocity =
+                previous_velocity > max_air_speed ? previous_velocity : max_air_speed;
+        }
+        player.velocity_x = next_velocity;
+    } else if (movement < 0) {
+        player.facing_left = true;
+        int next_velocity = player.velocity_x - accel;
+        const int min_air_speed = -max_air_speed;
+        if (next_velocity < min_air_speed) {
+            const int previous_velocity = next_velocity + accel;
+            next_velocity =
+                previous_velocity < min_air_speed ? previous_velocity : min_air_speed;
+        }
+        player.velocity_x = next_velocity;
+    }
+
+    // PlrAirDrag's passive horizontal air drag only runs once the ROM vertical
+    // speed drops below +0x400.  The viewer stores upward motion as negative,
+    // so fast upward motion is <= -0x400 here and must return unchanged.
+    if (player.velocity_y <= -kJumpReleaseLimit) {
+        return;
+    }
+
+    const int drag = player.velocity_x >> 5;
+    if (drag == 0) {
+        return;
+    }
+    const int next_velocity = player.velocity_x - drag;
+    if ((player.velocity_x > 0 && next_velocity < 0) ||
+        (player.velocity_x < 0 && next_velocity > 0)) {
+        player.velocity_x = 0;
+    } else {
+        player.velocity_x = next_velocity;
+    }
 }
 
 void update_player(Player& player, const CollisionMask& collision,
@@ -1863,6 +2096,24 @@ void update_player(Player& player, const CollisionMask& collision,
     player.jump_held = jump_held;
     player.input_up = input_up;
     player.input_down = input_down;
+
+    bool started_jump_this_tick = false;
+    if (player.pending_jump && player.grounded) {
+        player.pending_jump = false;
+        player.velocity_y = -kJumpImpulse;
+        player.velocity_x = ground_velocity_x(player);
+        if (player.body_half_height != 10) {
+            player.body_half_height = 10;
+            player.y_raw += 3 * kFixedOne;
+        }
+        player.grounded = false;
+        started_jump_this_tick = true;
+        player.jump_release_limited = true;
+        player.walking_active = false;
+        player.air_time = 0.0F;
+    } else {
+        player.pending_jump = false;
+    }
 
     if (
         player.grounded &&
@@ -1891,26 +2142,9 @@ void update_player(Player& player, const CollisionMask& collision,
         if (player.skid_dust_cooldown > 0) {
             --player.skid_dust_cooldown;
         }
-    } else {
+    } else if (!started_jump_this_tick) {
         player.skid_dust_cooldown = 0;
-        if (movement > 0) {
-            player.velocity_x = std::min(
-                player.velocity_x + kAirAcceleration, kAirMaxXSpeed);
-            player.facing_left = false;
-        } else if (movement < 0) {
-            player.velocity_x = std::max(
-                player.velocity_x - kAirAcceleration, -kAirMaxXSpeed);
-            player.facing_left = true;
-        }
-    }
-
-    if (jump_pressed && player.grounded) {
-        player.velocity_y = -kJumpImpulse;
-        player.velocity_x = ground_velocity_x(player);
-        player.grounded = false;
-        player.jump_release_limited = true;
-        player.walking_active = false;
-        player.air_time = 0.0F;
+        rom_plr_air_drag(player, movement);
     }
 
     if (
@@ -1925,13 +2159,22 @@ void update_player(Player& player, const CollisionMask& collision,
         player.velocity_y = std::min(player.velocity_y + kGravity, kFallMaxSpeed);
     }
 
-    const int previous_x_raw = player.x_raw;
-    const int previous_y_raw = player.y_raw;
+    player.previous_x_raw = player.x_raw;
+    player.previous_y_raw = player.y_raw;
 
     player.x_raw += player.velocity_x;
-    player.x_raw = std::clamp(
+    if (player.x_raw < kRomPlayerLeftBoundaryRaw) {
+        player.x_raw = kRomPlayerLeftBoundaryRaw;
+        if (player.velocity_x < 0) {
+            player.velocity_x = 0;
+        }
+        if (player.ground_speed > 0 && player.facing_left) {
+            player.ground_speed = 0;
+            player.walking_active = false;
+        }
+    }
+    player.x_raw = std::min(
         player.x_raw,
-        static_cast<int>((kCameraMinX + kPlayerHalfWidth) * kFixedOne),
         static_cast<int>((kCameraMaxX + kLogicalWidth - kPlayerHalfWidth) * kFixedOne));
 
     player.y_raw += player.velocity_y;
@@ -1948,12 +2191,14 @@ void update_player(Player& player, const CollisionMask& collision,
         const int start_ground_angle = player.ground_angle & 0xFF;
         const int scan_x_length =
             std::clamp(
-                std::abs((player.x_raw / kFixedOne) - (previous_x_raw / kFixedOne)) + 1,
+                std::abs((player.x_raw / kFixedOne) -
+                         (player.previous_x_raw / kFixedOne)) + 1,
                 1,
                 0x20);
         const int scan_y_length =
             std::clamp(
-                std::abs((player.y_raw / kFixedOne) - (previous_y_raw / kFixedOne)) + 1,
+                std::abs((player.y_raw / kFixedOne) -
+                         (player.previous_y_raw / kFixedOne)) + 1,
                 1,
                 0x20);
         const int moved_x_raw = player.x_raw;
@@ -1967,22 +2212,18 @@ void update_player(Player& player, const CollisionMask& collision,
             player.x_raw == moved_x_raw) {
             player.x_raw += kFixedOne;
         }
-        if (
-            start_ground_angle == 0 &&
-            projected_velocity_x < 0 &&
-            previous_x_raw >= 19505 &&
-            player.x_raw < 19505) {
-            player.x_raw = 19505;
-            player.ground_speed = 0;
-            player.velocity_x = 0;
-            player.velocity_y = 0;
-            player.walking_active = false;
+        const bool missing_ground_support =
+            !rom_has_ground_support(player, collision);
+        const bool lost_ground =
+            missing_ground_support && !rom_check_no_ground(player, collision);
+        if (lost_ground || rom_should_leave_ground_at_low_speed(player)) {
+            rom_leave_ground(player);
+        } else {
+            player.grounded = true;
         }
-        // Keep the grounded state through the ROM ground-surface pass. The
-        // follow-up support probe is not yet faithful enough to be the state
-        // authority; using it here falsely drops Sonic into airborne state on
-        // the first flat-ground step of the captured ROM trace.
-        player.grounded = true;
+        if (jump_pressed && player.grounded) {
+            player.pending_jump = true;
+        }
         }
     } else if (player.velocity_y >= 0) {
         const int landing_velocity_x = player.velocity_x;
@@ -1992,21 +2233,18 @@ void update_player(Player& player, const CollisionMask& collision,
             player.jump_release_limited = false;
 
             const int landing_angle = player.ground_angle & 0xFF;
-            const bool steep_landing =
-                landing_angle >= 0x20 &&
-                landing_angle < 0x60 &&
-                std::abs(landing_velocity_y) >= std::abs(landing_velocity_x);
-            if (steep_landing) {
+            if (landing_angle == 0x2D && landing_velocity_x == 0) {
+                player.y_raw -= kFixedOne;
+                player.ground_angle = 0x29;
                 player.ground_speed = -std::abs(landing_velocity_y);
-                player.velocity_x = landing_velocity_x;
                 player.velocity_y = landing_velocity_y;
-                if (landing_angle == 0x2D && landing_velocity_x == 0) {
-                    player.y_raw -= kFixedOne;
-                    player.ground_angle = 0x29;
-                }
             } else {
-                player.facing_left = landing_velocity_x < 0;
-                player.ground_speed = std::abs(landing_velocity_x);
+                player.ground_speed = rom_sub_39abec_landing_speed(
+                    landing_velocity_x,
+                    landing_velocity_y,
+                    player.ground_angle,
+                    player.facing_left);
+                player.velocity_y = landing_velocity_y;
             }
             player.walking_active = player.ground_speed != 0;
         }
@@ -2014,9 +2252,7 @@ void update_player(Player& player, const CollisionMask& collision,
 
     if (!player.grounded) {
         player.ground_slope = 0.0F;
-        if (player.ground_angle > 0 && player.ground_angle <= 0x40) {
-            player.ground_angle = std::max(0, player.ground_angle - 4);
-        }
+        rom_rotate_player_angle_to_zero(player);
         player.air_time += 1.0F / 60.0F;
     }
     update_dust_puffs(player);
@@ -2110,7 +2346,7 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
             sonic.texture.value,
             nullptr,
             &sonic_destination,
-            0.0,
+            player_render_angle_degrees(player),
             nullptr,
             player.facing_left ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE)) {
         return fail("Unable to render Sonic");

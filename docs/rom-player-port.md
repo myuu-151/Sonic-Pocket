@@ -98,10 +98,37 @@ Port the remaining movement/collision routines in ROM order:
 
 1. `sub_39B508` ground movement / collision application
 2. `Plr_CheckNoGrnd` support checks
-3. `Plr_CheckJump`
-4. `sub_39ABEC` for air-to-ground speed conversion
+3. `Plr_IsOnGround` landing/contact probe selection
+4. Remaining `Plr_CheckJump` edge cases
 
 Keep the replay harness as the regression check after each replacement.
+
+## Air drag and landing projection status
+
+Two additional ROM routines are now represented in the active viewer:
+
+- `PlrAirDrag`
+  - Air input acceleration uses the ROM's `0x40` step.
+  - Air control approaches the normal `0x800` cap without destroying
+    over-cap momentum inherited from ground speed, slopes, or ramps.
+  - Passive horizontal air drag is gated against the ROM vertical-speed
+    threshold with the viewer's inverted Y-speed sign accounted for.
+- `sub_39ABEC`
+  - Air X/Y velocity is converted back into ROM-style ground speed on landing.
+  - The projection can halve landing speed when the incoming air vector meets
+    the slope shallowly, matching the traced ramp landing's ground-speed value.
+
+Current trace result:
+
+- The native replay now matches the ROM through the jump/ramp approach that
+  previously exposed early air-speed clamping.
+- At frame `1636`, the landing ground speed matches, but contact selection is
+  still off: native chooses surface angle `0x13`, while the ROM chooses
+  `0x0F`.
+
+This confirms the next fix belongs in the shared ground-contact port
+(`Plr_IsOnGround` / `sub_39B508` / `Plr_CheckNoGrnd`) rather than in
+individual ramp geometry.
 
 ## Representation mismatch fixed during signed-speed refactor
 

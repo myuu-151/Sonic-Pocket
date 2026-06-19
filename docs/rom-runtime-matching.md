@@ -9,8 +9,14 @@ runtime fields frame-by-frame.
 - The viewer renders the extracted Neo South Island Act 1 assets and has a
   controllable Sonic.
 - Animation bands for walk, run, and max-speed peelout are disassembly-backed.
-- Movement, slope attachment, skid/reversal, and camera follow are still not
-  1:1. The current native movement code is a simplified stand-in.
+- Movement is no longer only a simplified stand-in. The active viewer has
+  ROM-shaped signed ground speed, facing flags, grounded acceleration,
+  skid/reversal, jump setup timing, `PlrAirDrag`-style air control, and
+  `sub_39ABEC`-style air-to-ground speed projection.
+- Slope/contact parity is still incomplete. The current known mismatch is a
+  traced Neo South Island Act 1 ramp landing where the native viewer selects
+  surface angle `0x13` while the ROM selects `0x0F`. This points at
+  `Plr_IsOnGround` / contact probe selection, not a single bad ramp tile.
 
 ## Existing runtime evidence
 
@@ -46,16 +52,43 @@ derives X/Y velocity from that state and the surface angle.
 1. Replace the viewer's temporary player model with a ROM-shaped player state:
    task flags, movement flags, surface angle, 16.8 position, ground speed, X/Y
    velocity, collision radii, and animation counters.
+   - Status: partially complete for the active viewer state needed by the
+     current movement trace.
 2. Port the flat-ground walking/reversal path from the ROM routines:
    `player_state_walk` at `0x399EF2`, `sub_399443`, and its skid helper.
+   - Status: implemented in the viewer and verified against the existing trace
+     windows used during movement work.
 3. Verify against the existing trace window around frame `3200` before changing
    slopes or camera.
 4. Port angle-to-velocity conversion and slope attachment/collision from the
    traced slope windows.
-5. Capture a fresh camera trace and port horizontal camera follow:
+   - Status: angle-to-velocity and several slope attachment pieces are ported,
+     but contact selection still diverges on ramp landing.
+5. Port the ROM ground-contact routines instead of adding ramp-specific fixes:
+   `Plr_IsOnGround`, the remaining `sub_39B508` collision paths, and
+   `Plr_CheckNoGrnd`.
+6. Capture a fresh camera trace and port horizontal camera follow:
    `update_player_camera_follow` at `0x39C9D9`.
-6. Only after movement/camera fields match should the viewer animation states
+7. Only after movement/camera fields match should the viewer animation states
    be judged visually.
+
+## Current trace status
+
+Recent native replay work moved the first physical mismatch much later in the
+recording:
+
+- Air control now preserves ROM over-cap ramp momentum through the jump arc.
+  The previous native behavior clamped X speed toward `0x800` too early.
+- Landing speed now uses a ROM-shaped `sub_39ABEC` projection, so the ground
+  speed at the ramp landing matches the ROM value of `992`.
+- The remaining mismatch at frame `1636` is contact selection and transition
+  velocity:
+  - ROM: surface angle `0x0F`, Y position `111926`, Y velocity `-1792`
+  - native: surface angle `0x13`, Y position `112182`, Y velocity transition
+    still differs after the contact pass
+
+That mismatch should be fixed by porting the shared ROM contact routines, not
+by changing individual level geometry or adding per-ramp exceptions.
 
 ## Trace analyzer
 

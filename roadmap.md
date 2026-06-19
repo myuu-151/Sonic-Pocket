@@ -105,10 +105,25 @@ state for regression testing.
       follow, and generated stage collision mask.
 - [x] Split prototype animation into explicit idle/run/jump/fall states with
       state-transition timing.
+- [x] Port the first ROM-shaped player movement primitives into the native
+      viewer: signed ground speed, ROM sine lookup, grounded acceleration,
+      skid/reversal, jump setup timing, `PlrAirDrag`-style air control, and
+      `sub_39ABEC`-style air-to-ground speed projection.
 - [ ] Implement 60 Hz presentation with the observed deterministic 30 Hz
       player gameplay tick; verify cadence for other subsystems.
 - [ ] Reimplement object scheduling and state.
 - [ ] Reimplement player physics and collision.
+  - [x] Runtime-match the early grounded movement trace through the first major
+        jump/ramp approach.
+  - [x] Preserve over-cap ramp momentum in air instead of clamping to the normal
+        air-control cap.
+  - [x] Convert landing X/Y velocity back into ROM-style ground speed using the
+        mapped `sub_39ABEC` behavior.
+  - [ ] Port `Plr_IsOnGround` / landing contact selection in full; the current
+        known mismatch is native selecting ramp angle `0x13` where the ROM
+        selects `0x0F` during a traced Neo South Island Act 1 ramp landing.
+  - [ ] Port the remaining `sub_39B508` and `Plr_CheckNoGrnd` collision/support
+        paths without per-ramp geometry fixes.
 - [ ] Reimplement the camera, stage loading, and level events.
 - [ ] Reimplement animation, rendering, menus, and save data.
 - [ ] Complete one representative stage before expanding to the full game.
@@ -160,19 +175,28 @@ reference result.
 
 ## Current focus
 
-The project is currently in phase 2: mapping the original game. Startup,
-VBlank, input polling, task scheduling, core player movement, spindash, roll,
-and the first collision pass are mapped. Full-height jump timing is now
-runtime-confirmed. Hurt, death, and vertical spring behavior are also mapped
-from a directed runtime trace. The camera origin, stage bounds, and static
-follow logic are mapped and cross-checked against ValleyBell's public SPA
-disassembly release. A ROM-driven extractor now reconstructs Neo South Island
-Act 1's two tile planes, collision values, palettes, and 94 object placements;
-all extracted binary regions are validated byte-for-byte against that public
-reference. The first native SDL3 executable displays the reconstructed stage
-through an integer-scaled 160 by 152 viewport. Sonic's idle sprite is now
-extracted from the user's ROM and driven by a first native movement prototype
-with left/right input, jumping, gravity, camera follow, and a generated Plane 2
-collision mask. The immediate target is replacing the prototype physics with
-the mapped player state machine and using runtime traces as the regression
-source for timing and behavior.
+The project is currently between phase 2 and phase 5: mapping continues, but
+the PC viewer now contains real ROM-shaped player routines instead of only a
+feel-based prototype. Startup, VBlank, input polling, task scheduling, core
+player movement, spindash, roll, jump setup, air drag, landing speed projection,
+and the first collision pass are mapped or partially ported. Full-height jump
+timing is runtime-confirmed. Hurt, death, and vertical spring behavior are also
+mapped from a directed runtime trace. The camera origin, stage bounds, and
+static follow logic are mapped and cross-checked against ValleyBell's public
+SPA disassembly release.
+
+A ROM-driven extractor reconstructs Neo South Island Act 1's two tile planes,
+collision values, palettes, and 94 object placements; all extracted binary
+regions are validated byte-for-byte against that public reference. The native
+SDL3 executable displays the reconstructed stage through an integer-scaled
+160 by 152 viewport and has controllable Sonic using ROM-extracted sprites,
+state-based animations, skid dust, slope attachment, jumping, air control, and
+camera follow.
+
+The immediate target is no longer guessing slope constants. The next required
+port is the ROM's ground contact path, especially `Plr_IsOnGround` and the
+remaining `sub_39B508` / `Plr_CheckNoGrnd` support logic. The current trace
+shows the native viewer matching the ROM through the jump/ramp approach, then
+diverging on a landing contact where native chooses ramp angle `0x13` and the
+ROM chooses `0x0F`. That must be fixed by porting the shared contact-selection
+routines, not by special-casing individual ramps.
