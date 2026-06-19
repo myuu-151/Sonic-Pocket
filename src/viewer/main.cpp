@@ -142,6 +142,17 @@ struct DustPuff {
     int ticks = 0;
 };
 
+struct CollisionResponse {
+    int response = 0;
+    int angle = 0;
+};
+
+struct RomCollisionHit {
+    bool hit = false;
+    int delta_y = 0;
+    int angle = 0;
+};
+
 struct Player {
     int x_raw = static_cast<int>(kPlayerStartX * kFixedOne);
     int y_raw = 0;
@@ -212,7 +223,7 @@ struct CollisionMask {
             (static_cast<int>(bytes[offset + 1]) << 8);
     }
 
-    std::optional<std::pair<int, int>> vertical_response(int x, int y) const {
+    std::optional<CollisionResponse> vertical_response(int x, int y) const {
         if (
             plane2_layout.empty() ||
             block_map.empty() ||
@@ -262,7 +273,7 @@ struct CollisionMask {
         const int table_index = local_y * 8 + (7 - local_x);
         const int response = read_s8(
             collision_defs[def_offset + 2 + 64 + table_index]);
-        return std::pair<int, int>{response, angle};
+        return CollisionResponse{response, angle};
     }
 
     int first_solid_y(int x, int start_y, int end_y) const {
@@ -718,92 +729,137 @@ int signed_angle_to_ground_force(int angle) {
     return static_cast<int>(std::round(std::sin(radians) * kSlopeGravity));
 }
 
-bool find_floor_sample(const CollisionMask& collision, int x, int foot_y,
-                       int& surface_y, int& surface_angle) {
-    bool found = false;
-    int best_surface = 0;
-    int best_distance = 0;
-    int best_angle = 0;
-    for (int y = foot_y - kGroundProbeUp; y <= foot_y + kGroundProbeDown; ++y) {
-        const auto response = collision.vertical_response(x, y);
-        if (!response.has_value()) {
-            continue;
+int rom_y_to_view_y(int rom_y) {
+    return kStageHeight - 1 - rom_y;
+}
+
+int view_y_to_rom_y(int view_y) {
+    return kStageHeight - 1 - view_y;
+}
+
+std::optional<CollisionResponse> vertical_response_rom_y(
+    const CollisionMask& collision, int x, int rom_y) {
+    return collision.vertical_response(x, rom_y_to_view_y(rom_y));
+}
+
+RomCollisionHit rom_bg_coll_chk4(
+    const CollisionMask& collision, int x, int rom_y, int scan_length) {
+    int offset = 0;
+    int remaining = scan_length;
+    int probe_y = rom_y;
+    while (remaining > 0) {
+        const auto sample = vertical_response_rom_y(collision, x, probe_y);
+        if (sample.has_value() && sample->response != 0x7F) {
+            if (sample->response > 0) {
+                return RomCollisionHit{
+                    true,
+                    sample->response + offset,
+                    sample->angle,
+                };
+            }
         }
-        const auto [correction, angle] = *response;
-        if (correction <= 0 || correction == 0x7F) {
-            continue;
-        }
-        const int candidate_surface = y - correction + 1;
-        const int distance = std::abs(candidate_surface - foot_y);
-        if (!found || distance < best_distance) {
-            found = true;
-            best_surface = candidate_surface;
-            best_distance = distance;
-            best_angle = angle;
-        }
+        --remaining;
+        ++probe_y;
+        ++offset;
     }
-    if (!found) {
-        return false;
+    return {};
+}
+
+RomCollisionHit rom_bg_coll_chk3(
+    const CollisionMask& collision, int x, int rom_y, int scan_length) {
+    int offset = 0;
+    int remaining = scan_length;
+    int probe_y = rom_y;
+    while (remaining > 0) {
+        const auto sample = vertical_response_rom_y(collision, x, probe_y);
+        if (sample.has_value() && sample->response != 0x7F) {
+            if (sample->response < 0) {
+                return RomCollisionHit{
+                    true,
+                    sample->response + offset,
+                    sample->angle,
+                };
+            }
+        }
+        --remaining;
+        --probe_y;
+        --offset;
     }
-    surface_y = best_surface;
-    surface_angle = best_angle;
-    return true;
+    return {};
+}
+
+RomCollisionHit choose_bg_coll_chk4_pair(
+    const CollisionMask& collision, int center_x, int rom_y, int scan_length) {
+    const RomCollisionHit right =
+        rom_bg_coll_chk4(collision, center_x + kSlopeProbeRadius, rom_y, scan_length);
+    const RomCollisionHit left =
+        rom_bg_coll_chk4(collision, center_x - kSlopeProbeRadius, rom_y, scan_length);
+    if (!left.hit) {
+        return right;
+    }
+    if (!right.hit) {
+        return left;
+    }
+    return left.delta_y >= right.delta_y ? left : right;
+}
+
+RomCollisionHit choose_bg_coll_chk3_pair(
+    const CollisionMask& collision, int center_x, int rom_y, int scan_length) {
+    const RomCollisionHit right =
+        rom_bg_coll_chk3(collision, center_x + kSlopeProbeRadius, rom_y, scan_length);
+    const RomCollisionHit left =
+        rom_bg_coll_chk3(collision, center_x - kSlopeProbeRadius, rom_y, scan_length);
+    if (!left.hit) {
+        return right;
+    }
+    if (!right.hit) {
+        return left;
+    }
+    return left.delta_y <= right.delta_y ? left : right;
 }
 
 bool update_ground_contact(Player& player, const CollisionMask& collision) {
-    const int foot_y = static_cast<int>(std::round(player.y() + kPlayerHalfHeight));
     const int center_x = static_cast<int>(std::round(player.x()));
-    const int left_x = center_x - kSlopeProbeRadius;
-    const int right_x = center_x + kSlopeProbeRadius;
+    const int center_y = static_cast<int>(std::round(player.y()));
+    const int rom_center_y = view_y_to_rom_y(center_y);
+    const int rom_floor_probe_y = rom_center_y - static_cast<int>(kPlayerHalfHeight);
+    const int rom_ceiling_probe_y = rom_center_y + static_cast<int>(kPlayerHalfHeight);
 
-    int center_surface = -1;
-    int left_surface = -1;
-    int right_surface = -1;
-    int center_angle = 0;
-    int left_angle = 0;
-    int right_angle = 0;
-    const bool hit_center =
-        find_floor_sample(collision, center_x, foot_y, center_surface, center_angle);
-    const bool hit_left =
-        find_floor_sample(collision, left_x, foot_y, left_surface, left_angle);
-    const bool hit_right =
-        find_floor_sample(collision, right_x, foot_y, right_surface, right_angle);
-    if (!hit_center && !hit_left && !hit_right) {
+    constexpr int kRomGroundScanLength = 9;
+    const RomCollisionHit floor_hit =
+        choose_bg_coll_chk4_pair(collision, center_x, rom_floor_probe_y, kRomGroundScanLength);
+    const RomCollisionHit ceiling_hit =
+        choose_bg_coll_chk3_pair(collision, center_x, rom_ceiling_probe_y, kRomGroundScanLength);
+
+    RomCollisionHit selected = floor_hit;
+    if (!selected.hit || (ceiling_hit.hit && std::abs(ceiling_hit.delta_y) < std::abs(selected.delta_y))) {
+        selected = ceiling_hit;
+    }
+    if (!selected.hit || selected.delta_y == 0) {
         return false;
     }
 
-    int surface = -1;
-    int selected_angle = 0;
-    auto consider_surface = [&](bool hit, int candidate, int angle) {
-        if (!hit) {
-            return;
-        }
-        if (surface < 0 ||
-            std::abs(candidate - foot_y) < std::abs(surface - foot_y)) {
-            surface = candidate;
-            selected_angle = angle;
-        }
-    };
-    consider_surface(hit_center, center_surface, center_angle);
-    consider_surface(hit_left, left_surface, left_angle);
-    consider_surface(hit_right, right_surface, right_angle);
-    if (surface < 0) {
-        return false;
-    }
-
-    player.y_raw = static_cast<int>(
-        (static_cast<float>(surface) - kPlayerHalfHeight) * kFixedOne);
+    const int new_center_y = center_y - selected.delta_y;
+    player.y_raw = new_center_y * kFixedOne;
     player.velocity_y = 0;
     player.air_time = 0.0F;
-    player.ground_angle = selected_angle;
+    player.ground_angle = selected.angle;
 
-    if (hit_left && hit_right) {
-        player.ground_slope =
-            static_cast<float>(right_surface - left_surface) /
-            static_cast<float>(right_x - left_x);
-    } else {
-        player.ground_slope = 0.0F;
-    }
+    const int left_surface = rom_y_to_view_y(
+        rom_floor_probe_y + rom_bg_coll_chk4(
+            collision,
+            center_x - kSlopeProbeRadius,
+            rom_floor_probe_y,
+            kRomGroundScanLength).delta_y);
+    const int right_surface = rom_y_to_view_y(
+        rom_floor_probe_y + rom_bg_coll_chk4(
+            collision,
+            center_x + kSlopeProbeRadius,
+            rom_floor_probe_y,
+            kRomGroundScanLength).delta_y);
+    player.ground_slope =
+        static_cast<float>(right_surface - left_surface) /
+        static_cast<float>(kSlopeProbeRadius * 2);
     return true;
 }
 
