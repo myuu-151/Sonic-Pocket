@@ -22,12 +22,16 @@ Place a legally obtained ROM in the local `Rom/` directory, then run:
 
 ```powershell
 python tools/rominfo.py
+python tools/extract_level.py
 python -m unittest discover -s tests -v
 ```
 
 The verification tool accepts only the known reference image described in
 [`config/rom.json`](config/rom.json). See
 [`docs/getting-started.md`](docs/getting-started.md) for the analysis workflow.
+The level extractor currently exports Neo South Island Act 1 as inspectable
+plane/collision PNGs, object JSON, and raw data under the ignored `out/nsi1/`
+directory.
 
 ## Repository policy
 

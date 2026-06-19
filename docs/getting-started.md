@@ -19,6 +19,28 @@ Run the tooling tests with:
 python -m unittest discover -s tests -v
 ```
 
+## Extract the first stage
+
+The first ROM-driven project milestone extracts Neo South Island Act 1:
+
+```powershell
+python tools/extract_level.py
+```
+
+The command verifies the ROM before reading it, then writes these generated
+files under the ignored `out/nsi1/` directory:
+
+- `stage.png`: the two hardware planes composited into a full-stage reference
+- `plane1.png` and `plane2.png`: separate 6400x992-pixel hardware planes
+- `collision.png`: color-coded path-1 collision tile values
+- `objects.json`: the object screen table and decoded 10-byte placements
+- `manifest.json`: ROM hashes, offsets, palette IDs, and output metadata
+- `data/`: exact raw level segments extracted from the user's ROM
+
+If the ignored ValleyBell reference bundle is present in its standard local
+directory, every extracted segment is also compared byte-for-byte with the
+reference binaries. No ROM data or generated assets are committed.
+
 ## Static analysis
 
 The preferred long-term environment is

@@ -55,11 +55,14 @@ and audio dispatch.
 
 - [x] Build a cartridge-header and reference-hash verifier.
 - [ ] Add a pointer and data-table scanner.
-- [ ] Build tile and palette viewers.
-- [ ] Build map, sprite, and animation viewers.
+- [x] Build tile and palette rendering for the first representative stage.
+- [x] Build full-plane and collision-map viewers for the first representative
+      stage.
+- [ ] Build sprite and animation viewers.
 - [ ] Identify compression formats and implement decompressors.
 - [ ] Build a MAME trace importer connected to the symbol database.
-- [ ] Build an asset extractor that requires the user's original ROM.
+- [x] Build an asset extractor that requires and verifies the user's original
+      ROM.
 - [ ] Document every discovered data format with ROM addresses and validation
       examples.
 
@@ -141,7 +144,7 @@ pass automated event-stream checks and listening comparisons.
       state at checkpoints.
 - [ ] Compare frame output at selected deterministic checkpoints.
 - [ ] Compare audio events and save-data output.
-- [ ] Run ROM-free tooling tests in continuous integration.
+- [x] Run ROM-free tooling tests in continuous integration.
 - [ ] Add native-engine regression tests as each subsystem lands.
 
 Validation is part of every phase rather than a final cleanup step. New native
@@ -156,7 +159,9 @@ and the first collision pass are mapped. Full-height jump timing is now
 runtime-confirmed. Hurt, death, and vertical spring behavior are also mapped
 from a directed runtime trace. The camera origin, stage bounds, and static
 follow logic are mapped and cross-checked against ValleyBell's public SPA
-disassembly release. That release also provides level, object, graphics, and
-sound format references. The immediate target is importing high-value symbols
-and specifying a ROM-driven level/object extractor, while runtime traces remain
-the regression source for timing and behavior.
+disassembly release. A ROM-driven extractor now reconstructs Neo South Island
+Act 1's two tile planes, collision values, palettes, and 94 object placements;
+all extracted binary regions are validated byte-for-byte against that public
+reference. The immediate target is turning this stage data and the mapped
+player behavior into the first native playable scene, while runtime traces
+remain the regression source for timing and behavior.
