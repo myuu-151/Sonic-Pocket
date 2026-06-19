@@ -40,7 +40,8 @@ constexpr int kGroundFriction = 0x20;
 constexpr int kGroundMaxSpeed = 0x800;
 constexpr int kGroundSkidDeceleration = 0x120;
 constexpr int kSlopeGravity = 0x18;
-constexpr int kSlopeProbeRadius = 4;
+constexpr int kSlopeProbeRadius = 7;
+constexpr int kGroundRetainSnapDown = 13;
 constexpr int kGroundProbeUp = 18;
 constexpr int kGroundProbeDown = 24;
 constexpr int kSkidAnimationTicks = 12;
@@ -181,6 +182,7 @@ struct Player {
 };
 
 int facing_sign(const Player& player);
+int signed_ground_speed(const Player& player);
 int ground_velocity_x(const Player& player);
 int ground_velocity_y(const Player& player);
 bool input_matches_facing(const Player& player, int movement);
@@ -686,13 +688,23 @@ int facing_sign(const Player& player) {
     return player.facing_left ? -1 : 1;
 }
 
-int ground_velocity_x(const Player& player) {
+int signed_ground_speed(const Player& player) {
     return facing_sign(player) * player.ground_speed;
 }
 
+float ground_angle_radians(const Player& player) {
+    constexpr float pi = 3.14159265358979323846F;
+    return static_cast<float>(player.ground_angle) * pi / 128.0F;
+}
+
+int ground_velocity_x(const Player& player) {
+    return static_cast<int>(
+        std::round(std::cos(ground_angle_radians(player)) * signed_ground_speed(player)));
+}
+
 int ground_velocity_y(const Player& player) {
-    (void)player;
-    return 0;
+    return static_cast<int>(
+        std::round(-std::sin(ground_angle_radians(player)) * signed_ground_speed(player)));
 }
 
 bool input_matches_facing(const Player& player, int movement) {
@@ -803,6 +815,50 @@ RomCollisionHit choose_bg_coll_chk4_pair(
     return left.delta_y >= right.delta_y ? left : right;
 }
 
+RomCollisionHit rom_bg_coll_chk4_window(
+    const CollisionMask& collision, int x, int rom_y, int min_offset, int max_offset) {
+    RomCollisionHit best;
+    for (int offset = min_offset; offset <= max_offset; ++offset) {
+        const auto sample = vertical_response_rom_y(collision, x, rom_y + offset);
+        if (!sample.has_value() || sample->response == 0x7F || sample->response <= 0) {
+            continue;
+        }
+
+        const RomCollisionHit candidate{
+            true,
+            sample->response + offset,
+            sample->angle,
+        };
+        if (!best.hit || std::abs(candidate.delta_y) < std::abs(best.delta_y)) {
+            best = candidate;
+        }
+    }
+    return best;
+}
+
+RomCollisionHit choose_bg_coll_chk4_retain_pair(
+    const CollisionMask& collision, int center_x, int rom_y, int scan_length) {
+    const RomCollisionHit right = rom_bg_coll_chk4_window(
+        collision,
+        center_x + kSlopeProbeRadius,
+        rom_y,
+        -kGroundRetainSnapDown,
+        scan_length - 1);
+    const RomCollisionHit left = rom_bg_coll_chk4_window(
+        collision,
+        center_x - kSlopeProbeRadius,
+        rom_y,
+        -kGroundRetainSnapDown,
+        scan_length - 1);
+    if (!left.hit) {
+        return right;
+    }
+    if (!right.hit) {
+        return left;
+    }
+    return left.delta_y >= right.delta_y ? left : right;
+}
+
 RomCollisionHit choose_bg_coll_chk3_pair(
     const CollisionMask& collision, int center_x, int rom_y, int scan_length) {
     const RomCollisionHit right =
@@ -818,32 +874,30 @@ RomCollisionHit choose_bg_coll_chk3_pair(
     return left.delta_y <= right.delta_y ? left : right;
 }
 
-bool update_ground_contact(Player& player, const CollisionMask& collision) {
-    const int center_x = static_cast<int>(std::round(player.x()));
-    const int center_y = static_cast<int>(std::round(player.y()));
+bool update_ground_contact(Player& player, const CollisionMask& collision, bool retain_ground = false) {
+    const int center_x = player.x_raw / kFixedOne;
+    const int center_y = player.y_raw / kFixedOne;
     const int rom_center_y = view_y_to_rom_y(center_y);
     const int rom_floor_probe_y = rom_center_y - static_cast<int>(kPlayerHalfHeight);
     const int rom_ceiling_probe_y = rom_center_y + static_cast<int>(kPlayerHalfHeight);
 
     constexpr int kRomGroundScanLength = 9;
-    const RomCollisionHit floor_hit =
+    RomCollisionHit floor_hit =
         choose_bg_coll_chk4_pair(collision, center_x, rom_floor_probe_y, kRomGroundScanLength);
-    const RomCollisionHit ceiling_hit =
-        choose_bg_coll_chk3_pair(collision, center_x, rom_ceiling_probe_y, kRomGroundScanLength);
-
-    RomCollisionHit selected = floor_hit;
-    if (!selected.hit || (ceiling_hit.hit && std::abs(ceiling_hit.delta_y) < std::abs(selected.delta_y))) {
-        selected = ceiling_hit;
+    if (!floor_hit.hit && retain_ground) {
+        floor_hit = choose_bg_coll_chk4_retain_pair(
+            collision, center_x, rom_floor_probe_y, kRomGroundScanLength);
     }
-    if (!selected.hit || selected.delta_y == 0) {
+    (void)rom_ceiling_probe_y;
+    if (!floor_hit.hit) {
         return false;
     }
 
-    const int new_center_y = center_y - selected.delta_y;
+    const int new_center_y = center_y - floor_hit.delta_y;
     player.y_raw = new_center_y * kFixedOne;
     player.velocity_y = 0;
     player.air_time = 0.0F;
-    player.ground_angle = selected.angle;
+    player.ground_angle = floor_hit.angle;
 
     const int left_surface = rom_y_to_view_y(
         rom_floor_probe_y + rom_bg_coll_chk4(
@@ -874,7 +928,7 @@ void update_player(Player& player, const CollisionMask& collision,
     if (player.grounded) {
         const int slope_force = signed_angle_to_ground_force(player.ground_angle);
         if (slope_force != 0) {
-            int signed_speed = ground_velocity_x(player) + slope_force;
+            int signed_speed = signed_ground_speed(player) + slope_force;
             signed_speed = std::clamp(signed_speed, -kGroundMaxSpeed, kGroundMaxSpeed);
             if (signed_speed != 0) {
                 player.facing_left = signed_speed < 0;
@@ -897,9 +951,9 @@ void update_player(Player& player, const CollisionMask& collision,
                 if (runtime_skid && player.skid_ticks == 0) {
                     player.skid_ticks = kSkidAnimationTicks;
                 }
-                if (runtime_skid && player.skid_dust_cooldown <= 0) {
+                if (runtime_skid) {
                     spawn_skid_dust(player);
-                    player.skid_dust_cooldown = kSkidDustSpawnInterval;
+                    player.skid_dust_cooldown = 0;
                 }
                 player.ground_speed -= kGroundSkidDeceleration;
                 if (player.ground_speed < 0) {
@@ -964,7 +1018,7 @@ void update_player(Player& player, const CollisionMask& collision,
     player.y_raw += player.velocity_y;
 
     if (player.grounded) {
-        player.grounded = update_ground_contact(player, collision);
+        player.grounded = update_ground_contact(player, collision, true);
     } else if (player.velocity_y >= 0 && update_ground_contact(player, collision)) {
         player.grounded = true;
         player.facing_left = player.velocity_x < 0;
