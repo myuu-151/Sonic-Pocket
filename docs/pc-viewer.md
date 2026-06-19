@@ -53,3 +53,8 @@ Gamepads are supported too:
 The blue/yellow cross marks the original player start coordinate from the level
 metadata. The marker is temporary; Sonic's real sprite and update loop come in a
 later native-engine milestone.
+
+Camera movement uses the original stage bounds: X starts at 64 and ends 224
+pixels before the layout edge; Y starts at 64 and ends 216 pixels before the
+layout edge. Recenter therefore places the start marker at the game's mapped
+48-pixel horizontal follow target.

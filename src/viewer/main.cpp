@@ -14,6 +14,10 @@ constexpr int kLogicalHeight = 152;
 constexpr int kDefaultWindowScale = 3;
 constexpr int kStageWidth = 6400;
 constexpr int kStageHeight = 992;
+constexpr float kCameraMinX = 64.0F;
+constexpr float kCameraMinY = 64.0F;
+constexpr float kCameraMaxX = static_cast<float>(kStageWidth - 224);
+constexpr float kCameraMaxY = static_cast<float>(kStageHeight - 216);
 constexpr float kPlayerStartX = 112.0F;
 constexpr float kPlayerStartY = 424.0F;
 constexpr float kCameraSpeed = 180.0F;
@@ -110,12 +114,12 @@ std::filesystem::path find_data_directory(
 void center_camera(float& camera_x, float& camera_y) {
     camera_x = std::clamp(
         kPlayerStartX - static_cast<float>(kLogicalWidth) / 2.0F,
-        0.0F,
-        static_cast<float>(kStageWidth - kLogicalWidth));
+        kCameraMinX,
+        kCameraMaxX);
     camera_y = std::clamp(
         kPlayerStartY - static_cast<float>(kLogicalHeight) / 2.0F,
-        0.0F,
-        static_cast<float>(kStageHeight - kLogicalHeight));
+        kCameraMinY,
+        kCameraMaxY);
 }
 
 bool set_window_scale(SDL_Window* window, int scale) {
@@ -365,12 +369,12 @@ int main(int argc, char* argv[]) {
         const float speed = fast ? kFastCameraSpeed : kCameraSpeed;
         camera_x = std::clamp(
             camera_x + movement_x * speed * delta_seconds,
-            0.0F,
-            static_cast<float>(kStageWidth - kLogicalWidth));
+            kCameraMinX,
+            kCameraMaxX);
         camera_y = std::clamp(
             camera_y + movement_y * speed * delta_seconds,
-            0.0F,
-            static_cast<float>(kStageHeight - kLogicalHeight));
+            kCameraMinY,
+            kCameraMaxY);
 
         const std::string title =
             "Sonic Pocket - Camera " +
