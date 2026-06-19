@@ -152,6 +152,7 @@ reference result.
 
 The project is currently in phase 2: mapping the original game. Startup,
 VBlank, input polling, task scheduling, core player movement, spindash, roll,
-and the first collision pass are mapped. The immediate target is a directed
-standing-jump trace followed by hurt, death, spring, camera, and stage-object
-state mapping.
+and the first collision pass are mapped. Full-height jump timing is now
+runtime-confirmed. The immediate target is hurt, death, spring, camera, and
+stage-object state mapping, with a short-tap jump trace retained as a small
+variable-height validation task.

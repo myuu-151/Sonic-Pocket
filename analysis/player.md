@@ -70,6 +70,27 @@ standing bounds.
 This confirms that the port can share a signed 8.8 velocity representation and
 an eight-bit angle system with the original player physics.
 
+The directed standing-jump trace confirms the normal values and sequence:
+
+- The press selects `player_enter_jump` on frame 1774.
+- On the next 30 Hz gameplay tick, the compact 7 by 10 bounds and airborne
+  flags are active. The jump impulse is `0x0900`; the common airborne update
+  immediately applies `0x0080` gravity, leaving logged velocity `0x0880`.
+- Gravity subtracts exactly `0x0080` on each later gameplay tick. The recorded
+  full-height jump reaches zero vertical velocity at frame 1810.
+- While A remains held, the task function stays at
+  `player_state_jump_held` (`0x39AAEB`) and executes the shared airborne body.
+  Releasing A changes the persistent state to `player_state_airborne`.
+- Floor collision selects the walk entry on frame 1846. Two video frames later
+  the idle entry restores task flags `0x01`, zero velocity, Y 469, and 7 by 13
+  standing bounds.
+
+`limit_jump_velocity_on_release` at `0x39AB8B` implements variable jump height.
+When neither A nor B remains held, it caps upward velocity at `0x0400`, or
+`0x02E0` under the reduced-velocity condition that is probably underwater.
+The first directed trace held A through the apex, so a short-tap capture is
+still useful for runtime confirmation of that clamp.
+
 ## Spindash and roll
 
 The crouching path enters `player_enter_spindash_charge` at `0x399B98` when a
@@ -115,7 +136,8 @@ angle `0x0A` produced positive X and Y velocity on an ascending slope, while
 Once airborne, `relax_airborne_surface_angle` at `0x39ABCA` moved the angle
 `0x40`, `0x3C`, `0x38`, and so on toward zero by four units per gameplay tick.
 
-See [runtime-trace-001.md](runtime-trace-001.md) for the captured checkpoints.
+See [runtime-trace-001.md](runtime-trace-001.md) and
+[runtime-trace-002.md](runtime-trace-002.md) for captured checkpoints.
 
 ## Collision overview
 
@@ -126,7 +148,8 @@ sensor pipeline and scratch layout are recorded in [collision.md](collision.md).
 
 ## Still to map
 
-The next player pass should capture a normal standing jump, then assign names
-to the hurt, death, and spring states and finish the remaining movement flag
-bits. Movement flag `+0x14` bit 7 controls facing and horizontal mirroring;
-another directed trace will establish its exact polarity.
+The next player pass should assign names to the hurt, death, and spring states
+and finish the remaining movement flag bits. A short-tap jump trace can confirm
+the variable-height velocity clamp. Movement flag `+0x14` bit 7 controls facing
+and horizontal mirroring; another directed trace will establish its exact
+polarity.

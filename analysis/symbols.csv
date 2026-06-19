@@ -40,7 +40,9 @@ address,name,kind,confidence,notes
 0x39AA86,player_enter_jump,function,confirmed,Applies jump velocity along the surface normal and enters airborne movement
 0x39AABA,set_player_airborne_flags,function,confirmed,Sets task flag bit 1 clears bit 7 and detaches the player from the supporting object
 0x39AAC6,player_enter_airborne,function,confirmed,Applies airborne flags and changes the task function to the common airborne state
+0x39AAEB,player_state_jump_held,function,confirmed,Keeps the variable-height jump state while A or B remains held and runs common airborne physics
 0x39AAF7,player_state_airborne,function,confirmed,Applies airborne movement gravity collision and animation
+0x39AB8B,limit_jump_velocity_on_release,function,confirmed,Clamps upward velocity when A and B are released to implement variable jump height
 0x39ABCA,relax_airborne_surface_angle,function,confirmed,Rotates the stored surface angle four units per gameplay tick back toward zero
 0x39B4C8,load_collision_radii,function,confirmed,Copies object horizontal and vertical collision radii into shared collision scratch values
 0x39B508,resolve_ground_surface_collision,function,probable,Probes around the current surface quadrant and snaps the player to the selected ground wall or ceiling
