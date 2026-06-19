@@ -384,7 +384,7 @@ AnimationState choose_animation_state(const Player& player) {
     }
     if (std::abs(player.ground_speed) > 0 ||
         std::abs(player.velocity_x) > 0) {
-        return std::abs(player.ground_speed) >= 0x600
+        return std::abs(player.ground_speed) >= 0x800
             ? AnimationState::Run
             : AnimationState::Walk;
     }
@@ -748,7 +748,7 @@ int main(int argc, char* argv[]) {
             app.renderer,
             data_directory,
             "run",
-            {2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F}),
+            {1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F}),
         load_animation_sequence(app.renderer, data_directory, "skid", {20.0F, 3.0F}),
         load_animation_sequence(
             app.renderer,

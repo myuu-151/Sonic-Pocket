@@ -56,8 +56,9 @@ SONIC_ANIMATIONS = {
     ),
     # PAniScr_398909: normal walking loop.
     "walk": tuple((sprite_id, 4) for sprite_id in range(0x0001, 0x0009)),
-    # PAniScr_398CD7 / asLoc_398CE7: fast ground cycle used by scripted movement.
-    "run": tuple((sprite_id, 2) for sprite_id in range(0x0001, 0x0009)),
+    # Plr_AngledAni / word_398F86: full-speed flat-ground running frames.
+    # The original switches from word_398D86 to this table at speed >= 0x800.
+    "run": tuple((sprite_id, 1) for sprite_id in (0x000E, 0x000F, 0x0010, 0x0011) * 2),
     # PAniScr_3988DD: skid/turnaround.
     "skid": ((0x000C, 20), (0x000D, 3)),
     # PAniScr_398B20: jump/spin.
