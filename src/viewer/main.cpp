@@ -702,6 +702,8 @@ int main(int argc, char* argv[]) {
     bool show_collision = false;
     bool jump_pressed = false;
     Uint64 previous_ticks = SDL_GetTicks();
+    float simulation_accumulator = 0.0F;
+    constexpr float kFixedFrameSeconds = 1.0F / 60.0F;
 
     while (running) {
         SDL_Event event{};
@@ -764,6 +766,7 @@ int main(int argc, char* argv[]) {
             static_cast<float>(current_ticks - previous_ticks) / 1000.0F,
             0.05F);
         previous_ticks = current_ticks;
+        simulation_accumulator += delta_seconds;
 
         const bool* keyboard = SDL_GetKeyboardState(nullptr);
         int movement_x = 0;
@@ -785,13 +788,22 @@ int main(int argc, char* argv[]) {
                 SDL_GetGamepadButton(app.gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
         }
 
-        update_player(
-            player, collision_mask,
-            std::clamp(movement_x, -1, 1),
-            jump_pressed,
-            jump_held);
-        jump_pressed = false;
-        update_animation(player, sonic_animations, delta_seconds);
+        int simulation_steps = 0;
+        while (simulation_accumulator >= kFixedFrameSeconds &&
+               simulation_steps < 4) {
+            update_player(
+                player, collision_mask,
+                std::clamp(movement_x, -1, 1),
+                jump_pressed,
+                jump_held);
+            jump_pressed = false;
+            update_animation(player, sonic_animations, kFixedFrameSeconds);
+            simulation_accumulator -= kFixedFrameSeconds;
+            ++simulation_steps;
+        }
+        if (simulation_steps == 4) {
+            simulation_accumulator = 0.0F;
+        }
         update_camera(camera_x, camera_y, player, delta_seconds);
         const SpriteFrame& sonic_frame = select_animation_frame(
             player, sonic_animations);
