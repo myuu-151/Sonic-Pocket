@@ -59,6 +59,22 @@ struct SpriteFrame {
     float origin_y = 0.0F;
 };
 
+struct AnimationFrame {
+    SpriteFrame sprite;
+    float duration_frames = 1.0F;
+};
+
+struct AnimationSequence {
+    std::vector<AnimationFrame> frames;
+};
+
+struct SonicAnimations {
+    AnimationSequence idle;
+    AnimationSequence run;
+    AnimationSequence jump;
+    AnimationSequence fall;
+};
+
 enum class AnimationState {
     Idle,
     Run,
@@ -89,7 +105,7 @@ struct Player {
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
     float air_time = 0.0F;
-    float run_cycle = 0.0F;
+    std::size_t animation_frame = 0;
 };
 
 struct CollisionMask {
@@ -159,6 +175,44 @@ SpriteFrame load_sprite_frame(SDL_Renderer* renderer,
         frame.texture = {};
     }
     return frame;
+}
+
+AnimationSequence load_animation_sequence(
+    SDL_Renderer* renderer,
+    const std::filesystem::path& data_directory,
+    std::string_view name,
+    const std::vector<float>& durations) {
+    AnimationSequence sequence;
+    for (std::size_t index = 0; index < durations.size(); ++index) {
+        char filename[32]{};
+        SDL_snprintf(
+            filename,
+            sizeof(filename),
+            "%.*s_%02zu.png",
+            static_cast<int>(name.size()),
+            name.data(),
+            index);
+        sequence.frames.push_back(
+            AnimationFrame{
+                load_sprite_frame(
+                    renderer,
+                    data_directory / "sonic" / filename,
+                    32.0F,
+                    40.0F),
+                durations[index],
+            });
+    }
+    return sequence;
+}
+
+bool animation_sequence_loaded(const AnimationSequence& sequence) {
+    return !sequence.frames.empty() &&
+        std::all_of(
+            sequence.frames.begin(),
+            sequence.frames.end(),
+            [](const AnimationFrame& frame) {
+                return frame.sprite.texture.value != nullptr;
+            });
 }
 
 CollisionMask load_collision_mask(const std::filesystem::path& path) {
@@ -285,21 +339,47 @@ AnimationState choose_animation_state(const Player& player) {
     return AnimationState::Idle;
 }
 
-void update_animation(Player& player, float delta_seconds) {
+const AnimationSequence& animation_sequence(
+    const SonicAnimations& animations, AnimationState state) {
+    switch (state) {
+        case AnimationState::Idle:
+            return animations.idle;
+        case AnimationState::Run:
+            return animations.run;
+        case AnimationState::Jump:
+            return animations.jump;
+        case AnimationState::Fall:
+            return animations.fall;
+    }
+    return animations.idle;
+}
+
+void update_animation(
+    Player& player, const SonicAnimations& animations, float delta_seconds) {
     const AnimationState next_state = choose_animation_state(player);
     if (next_state != player.animation_state) {
         player.animation_state = next_state;
         player.animation_time = 0.0F;
+        player.animation_frame = 0;
     } else {
-        player.animation_time += delta_seconds;
+        player.animation_time += delta_seconds * 60.0F;
     }
 
-    if (player.animation_state == AnimationState::Run) {
-        const float speed_factor = std::clamp(
-            std::abs(player.velocity_x) / kMaxRunSpeed, 0.35F, 1.0F);
-        player.run_cycle += delta_seconds * 10.0F * speed_factor;
-    } else if (player.animation_state == AnimationState::Idle) {
-        player.run_cycle = 0.0F;
+    const AnimationSequence& sequence =
+        animation_sequence(animations, player.animation_state);
+    if (sequence.frames.empty()) {
+        player.animation_frame = 0;
+        player.animation_time = 0.0F;
+        return;
+    }
+
+    player.animation_frame %= sequence.frames.size();
+    while (player.animation_time >=
+           sequence.frames[player.animation_frame].duration_frames) {
+        player.animation_time -=
+            sequence.frames[player.animation_frame].duration_frames;
+        player.animation_frame =
+            (player.animation_frame + 1) % sequence.frames.size();
     }
 }
 
@@ -313,7 +393,7 @@ void reset_player(Player& player, const CollisionMask& collision) {
     player.animation_state = AnimationState::Idle;
     player.animation_time = 0.0F;
     player.air_time = 0.0F;
-    player.run_cycle = 0.0F;
+    player.animation_frame = 0;
 }
 
 void update_player(Player& player, const CollisionMask& collision,
@@ -406,21 +486,15 @@ void update_camera(float& camera_x, float& camera_y, const Player& player,
 }
 
 const SpriteFrame& select_animation_frame(
-    const Player& player,
-    const std::vector<SpriteFrame>& run_frames,
-    const SpriteFrame& jump_frame) {
-    switch (player.animation_state) {
-        case AnimationState::Idle:
-            return run_frames[0];
-        case AnimationState::Run: {
-            const int frame_index = 1 + (static_cast<int>(player.run_cycle) % 3);
-            return run_frames[frame_index];
-        }
-        case AnimationState::Jump:
-        case AnimationState::Fall:
-            return jump_frame;
+    const Player& player, const SonicAnimations& animations) {
+    const AnimationSequence& sequence =
+        animation_sequence(animations, player.animation_state);
+    if (!sequence.frames.empty()) {
+        return sequence
+            .frames[player.animation_frame % sequence.frames.size()]
+            .sprite;
     }
-    return run_frames[0];
+    return animations.idle.frames[0].sprite;
 }
 
 bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
@@ -529,19 +603,22 @@ int main(int argc, char* argv[]) {
 
     Texture stage = load_png(app.renderer, stage_path);
     Texture collision = load_png(app.renderer, collision_path, true);
-    std::vector<SpriteFrame> run_frames;
-    run_frames.push_back(load_sprite_frame(app.renderer, sonic_idle_path, 9.0F, 15.0F));
-    run_frames.push_back(load_sprite_frame(app.renderer, data_directory / "sonic" / "step0.png", 9.0F, 15.0F));
-    run_frames.push_back(load_sprite_frame(app.renderer, data_directory / "sonic" / "step1.png", 10.0F, 12.0F));
-    run_frames.push_back(load_sprite_frame(app.renderer, data_directory / "sonic" / "step2.png", 8.0F, 12.0F));
-    SpriteFrame jump_frame = load_sprite_frame(app.renderer, data_directory / "sonic" / "jump.png", 12.0F, 12.0F);
+    SonicAnimations sonic_animations{
+        load_animation_sequence(app.renderer, data_directory, "idle", {60.0F, 3.0F, 20.0F}),
+        load_animation_sequence(
+            app.renderer,
+            data_directory,
+            "run",
+            {2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F}),
+        load_animation_sequence(app.renderer, data_directory, "jump", {1.0F}),
+        load_animation_sequence(app.renderer, data_directory, "fall", {1.0F}),
+    };
     CollisionMask collision_mask = load_collision_mask(collision_mask_path);
     if (stage.value == nullptr || collision.value == nullptr ||
-        run_frames[0].texture.value == nullptr ||
-        run_frames[1].texture.value == nullptr ||
-        run_frames[2].texture.value == nullptr ||
-        run_frames[3].texture.value == nullptr ||
-        jump_frame.texture.value == nullptr ||
+        !animation_sequence_loaded(sonic_animations.idle) ||
+        !animation_sequence_loaded(sonic_animations.run) ||
+        !animation_sequence_loaded(sonic_animations.jump) ||
+        !animation_sequence_loaded(sonic_animations.fall) ||
         collision_mask.pixels.empty()) {
         return 1;
     }
@@ -554,7 +631,8 @@ int main(int argc, char* argv[]) {
 
     if (smoke_test) {
         if (!render_frame(
-                app, stage.value, collision.value, run_frames[0], player,
+                app, stage.value, collision.value,
+                sonic_animations.idle.frames[0].sprite, player,
                 camera_x, camera_y, true)) {
             return 1;
         }
@@ -649,10 +727,10 @@ int main(int argc, char* argv[]) {
             std::clamp(movement_x, -1.0F, 1.0F),
             jump_pressed, delta_seconds);
         jump_pressed = false;
-        update_animation(player, delta_seconds);
+        update_animation(player, sonic_animations, delta_seconds);
         update_camera(camera_x, camera_y, player, delta_seconds);
         const SpriteFrame& sonic_frame = select_animation_frame(
-            player, run_frames, jump_frame);
+            player, sonic_animations);
 
         const std::string title =
             "Sonic Pocket - Camera " +

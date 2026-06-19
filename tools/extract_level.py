@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import struct
 import sys
 import zlib
@@ -27,13 +28,19 @@ PALETTE_COLLECTION_OFFSET = 0x03C748
 PALETTE_COLLECTION_SIZE = 0x1800
 SPRITE_TILES_OFFSET = 0x00CB34
 SPRITE_TILES_SIZE = 0x2AA40
-SONIC_FRAMES = (
-    ("idle", 0x000B7C, 0x22, 0x000D7C, 0x16),
-    ("step0", 0x000BC0, 0x22, 0x000DA8, 0x16),
-    ("step1", 0x000C54, 0x22, 0x000E00, 0x1A),
-    ("step2", 0x000C76, 0x26, 0x000E1A, 0x16),
-    ("jump", 0x000CBE, 0x26, 0x000E46, 0x0E),
-)
+SONIC_CANVAS_WIDTH = 64
+SONIC_CANVAS_HEIGHT = 64
+SONIC_CANVAS_ORIGIN_X = 32
+SONIC_CANVAS_ORIGIN_Y = 40
+SONIC_ANIMATIONS = {
+    # PAniScr_398737: standing blink/idle loop.
+    "idle": ((0x0009, 60), (0x000A, 3), (0x000B, 20)),
+    # PAniScr_398CD7 / asLoc_398CE7: fast ground cycle.
+    "run": tuple((sprite_id, 2) for sprite_id in range(0x0001, 0x0009)),
+    # PAniScr_398CD1: airborne/spin player sprite.
+    "jump": ((0x0055, 1),),
+    "fall": ((0x0055, 1),),
+}
 
 
 @dataclass(frozen=True)
@@ -406,6 +413,8 @@ def render_sprite(
         for index in range(count):
             offset = 2 + index * 4
             tile_id = int.from_bytes(sprite_data[offset : offset + 2], "little")
+            if tile_id == 0xFFFF:
+                continue
             x = int.from_bytes(
                 sprite_data[offset + 2 : offset + 3], "little", signed=True
             )
@@ -440,6 +449,91 @@ def render_sprite(
                 )
                 image[destination + 3] = 255
     return width, height, -min_x, -min_y, bytes(image)
+
+
+def place_sprite_on_canvas(
+    width: int, height: int, origin_x: int, origin_y: int, rgba: bytes
+) -> bytes:
+    canvas = bytearray(SONIC_CANVAS_WIDTH * SONIC_CANVAS_HEIGHT * 4)
+    offset_x = SONIC_CANVAS_ORIGIN_X - origin_x
+    offset_y = SONIC_CANVAS_ORIGIN_Y - origin_y
+    for source_y in range(height):
+        destination_y = offset_y + source_y
+        if destination_y < 0 or destination_y >= SONIC_CANVAS_HEIGHT:
+            continue
+        for source_x in range(width):
+            destination_x = offset_x + source_x
+            if destination_x < 0 or destination_x >= SONIC_CANVAS_WIDTH:
+                continue
+            source = (source_y * width + source_x) * 4
+            if rgba[source + 3] == 0:
+                continue
+            destination = (destination_y * SONIC_CANVAS_WIDTH + destination_x) * 4
+            canvas[destination : destination + 4] = rgba[source : source + 4]
+    return bytes(canvas)
+
+
+def parse_player_sprite_list(reference_directory: Path) -> list[tuple[int, int]]:
+    spa_asm = reference_directory / "spa.asm"
+    if not spa_asm.is_file():
+        raise FileNotFoundError(f"missing disassembly source: {spa_asm}")
+
+    rows: list[tuple[int, int]] = []
+    collecting = False
+    sprite_pattern = re.compile(r"Spr_[0-9A-Fa-f]+_([0-9A-Fa-f]+)")
+    for line in spa_asm.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "Player_SprList:" in line:
+            collecting = True
+        if not collecting:
+            continue
+
+        matches = [int(match, 16) for match in sprite_pattern.findall(line)]
+        if len(matches) >= 2:
+            rows.append((matches[0], matches[1]))
+            continue
+        if rows and line and not line[0].isspace() and not line.startswith(";"):
+            break
+
+    if len(rows) <= 0x55:
+        raise ValueError(
+            f"Player_SprList only yielded {len(rows)} rows; expected at least 0x56"
+        )
+    return rows
+
+
+def sprite_definition_size(sprite_data: bytes, offset: int) -> int:
+    if offset + 2 > len(sprite_data):
+        raise ValueError(f"sprite definition 0x{offset:04X} is outside sprite data")
+    count = sprite_data[offset]
+    size = 2 + count * 4
+    if offset + size > len(sprite_data):
+        raise ValueError(f"sprite definition 0x{offset:04X} is truncated")
+    return size
+
+
+def render_player_sprite(
+    rom: bytes,
+    sprite_tiles: bytes,
+    palette_collection: bytes,
+    player_sprite_list: list[tuple[int, int]],
+    sprite_id: int,
+) -> tuple[int, int, bytes]:
+    layer0_offset, layer1_offset = player_sprite_list[sprite_id]
+    layer0_size = sprite_definition_size(rom, layer0_offset)
+    layer1_size = sprite_definition_size(rom, layer1_offset)
+    width, height, origin_x, origin_y, rgba = render_sprite(
+        sprite_tiles,
+        palette_collection,
+        [
+            (rom[layer0_offset : layer0_offset + layer0_size], 0),
+            (rom[layer1_offset : layer1_offset + layer1_size], 7),
+        ],
+    )
+    return (
+        SONIC_CANVAS_ORIGIN_X,
+        SONIC_CANVAS_ORIGIN_Y,
+        place_sprite_on_canvas(width, height, origin_x, origin_y, rgba),
+    )
 
 
 def collision_surface(collision_type: int, x: int) -> int | None:
@@ -645,32 +739,76 @@ def extract(
     sprite_tiles = rom[
         SPRITE_TILES_OFFSET : SPRITE_TILES_OFFSET + SPRITE_TILES_SIZE
     ]
+    player_sprite_list = parse_player_sprite_list(reference or DEFAULT_REFERENCE)
     sonic_directory = output / "sonic"
     sonic_directory.mkdir(exist_ok=True)
     sonic_frames: list[dict[str, Any]] = []
-    for frame_name, layer0_offset, layer0_size, layer1_offset, layer1_size in SONIC_FRAMES:
-        frame_width, frame_height, frame_origin_x, frame_origin_y, frame_rgba = (
-            render_sprite(
-                sprite_tiles,
-                palette_collection,
-                [
-                    (rom[layer0_offset : layer0_offset + layer0_size], 0),
-                    (rom[layer1_offset : layer1_offset + layer1_size], 7),
-                ],
+    sonic_animations: dict[str, list[dict[str, Any]]] = {}
+    rendered_sprite_ids: dict[int, str] = {}
+
+    for animation_name, frames in SONIC_ANIMATIONS.items():
+        sonic_animations[animation_name] = []
+        for frame_index, (sprite_id, duration) in enumerate(frames):
+            frame_filename = f"{animation_name}_{frame_index:02d}.png"
+            if sprite_id in rendered_sprite_ids:
+                source_name = rendered_sprite_ids[sprite_id]
+                source_bytes = (sonic_directory / source_name).read_bytes()
+                (sonic_directory / frame_filename).write_bytes(source_bytes)
+            else:
+                frame_origin_x, frame_origin_y, frame_rgba = render_player_sprite(
+                    rom,
+                    sprite_tiles,
+                    palette_collection,
+                    player_sprite_list,
+                    sprite_id,
+                )
+                write_png_rgba(
+                    sonic_directory / frame_filename,
+                    SONIC_CANVAS_WIDTH,
+                    SONIC_CANVAS_HEIGHT,
+                    frame_rgba,
+                )
+                rendered_sprite_ids[sprite_id] = frame_filename
+
+            legacy_name = {
+                ("idle", 0): "idle.png",
+                ("run", 0): "step0.png",
+                ("run", 1): "step1.png",
+                ("run", 2): "step2.png",
+                ("jump", 0): "jump.png",
+            }.get((animation_name, frame_index))
+            if legacy_name is not None:
+                (sonic_directory / legacy_name).write_bytes(
+                    (sonic_directory / frame_filename).read_bytes()
+                )
+            if animation_name == "idle" and frame_index == 0:
+                (output / "sonic-idle.png").write_bytes(
+                    (sonic_directory / frame_filename).read_bytes()
+                )
+
+            sonic_animations[animation_name].append(
+                {
+                    "sprite_id": sprite_id,
+                    "duration_frames": duration,
+                    "output": f"sonic/{frame_filename}",
+                    "size": [SONIC_CANVAS_WIDTH, SONIC_CANVAS_HEIGHT],
+                    "origin": [SONIC_CANVAS_ORIGIN_X, SONIC_CANVAS_ORIGIN_Y],
+                }
             )
-        )
-        frame_filename = f"{frame_name}.png"
-        write_png_rgba(sonic_directory / frame_filename, frame_width, frame_height, frame_rgba)
-        if frame_name == "idle":
-            write_png_rgba(output / "sonic-idle.png", frame_width, frame_height, frame_rgba)
-        sonic_frames.append(
-            {
-                "name": frame_name,
-                "output": f"sonic/{frame_filename}",
-                "size": [frame_width, frame_height],
-                "origin": [frame_origin_x, frame_origin_y],
-            }
-        )
+            sonic_frames.append(
+                {
+                    "name": f"{animation_name}_{frame_index:02d}",
+                    "sprite_id": sprite_id,
+                    "duration_frames": duration,
+                    "output": f"sonic/{frame_filename}",
+                    "size": [SONIC_CANVAS_WIDTH, SONIC_CANVAS_HEIGHT],
+                    "origin": [SONIC_CANVAS_ORIGIN_X, SONIC_CANVAS_ORIGIN_Y],
+                }
+            )
+
+    (sonic_directory / "animations.json").write_text(
+        json.dumps(sonic_animations, indent=2) + "\n", encoding="utf-8"
+    )
 
     objects = parse_objects(segments["objects"])
     (output / "objects.json").write_text(
@@ -707,6 +845,12 @@ def extract(
             "plane2": "plane2.png",
             "collision_path1": "collision.png",
             "sonic_idle": "sonic-idle.png",
+        },
+        "sonic_animations": {
+            "output": "sonic/animations.json",
+            "canvas": [SONIC_CANVAS_WIDTH, SONIC_CANVAS_HEIGHT],
+            "origin": [SONIC_CANVAS_ORIGIN_X, SONIC_CANVAS_ORIGIN_Y],
+            "states": sonic_animations,
         },
         "sonic_frames": sonic_frames,
         "collision_mask": {
