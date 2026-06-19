@@ -705,7 +705,7 @@ int ground_velocity_x(const Player& player) {
 
 int ground_velocity_y(const Player& player) {
     const float projected =
-        -std::sin(ground_angle_radians(player)) *
+        std::sin(ground_angle_radians(player)) *
         static_cast<float>(signed_ground_speed(player));
     return static_cast<int>(std::round(projected));
 }
@@ -840,7 +840,7 @@ bool update_ground_contact(Player& player, const CollisionMask& collision) {
     const int rom_floor_probe_y = rom_center_y - static_cast<int>(kPlayerHalfHeight);
     const int rom_ceiling_probe_y = rom_center_y + static_cast<int>(kPlayerHalfHeight);
 
-    constexpr int kRomGroundScanLength = 9;
+    constexpr int kRomGroundScanLength = 0x10;
     const RomCollisionHit floor_hit =
         choose_bg_coll_chk4_pair(collision, center_x, rom_floor_probe_y, kRomGroundScanLength);
     const RomCollisionHit ceiling_hit =
