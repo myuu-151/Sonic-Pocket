@@ -7,7 +7,6 @@ local RAM_BASE = 0x4000
 local source = debug.getinfo(1, "S").source
 local script_path = source:sub(1, 1) == "@" and source:sub(2) or source
 local repo_root = script_path:match("^(.*)[/\\]scripts[/\\][^/\\]+$") or "."
-local output_path = repo_root .. "\\out\\player-runtime-trace.csv"
 
 local main_name = mainmemory.getname()
 local main_size = mainmemory.getcurrentmemorydomainsize()
@@ -44,9 +43,38 @@ local function read_u32(address)
     return read_u16(address) | (read_u16(address + 2) << 16)
 end
 
-local trace, open_error = io.open(output_path, "w")
+local output_candidates = {}
+if repo_root ~= "." then
+    table.insert(output_candidates, repo_root .. "\\out\\player-runtime-trace.csv")
+end
+
+-- BizHawk's Lua Console may expose only the script filename through
+-- debug.getinfo(), even when its UI knows the full path. Cover the standard
+-- project location explicitly without hard-coding a Windows account name.
+local user_profile = os.getenv("USERPROFILE")
+if user_profile then
+    table.insert(
+        output_candidates,
+        user_profile .. "\\Documents\\SonicPocket\\out\\player-runtime-trace.csv"
+    )
+end
+table.insert(output_candidates, ".\\player-runtime-trace.csv")
+
+local trace = nil
+local output_path = nil
+local open_errors = {}
+for _, candidate in ipairs(output_candidates) do
+    local handle, open_error = io.open(candidate, "w")
+    if handle then
+        trace = handle
+        output_path = candidate
+        break
+    end
+    table.insert(open_errors, candidate .. ": " .. tostring(open_error))
+end
+
 if not trace then
-    error("Could not open " .. output_path .. ": " .. tostring(open_error))
+    error("Could not create the trace CSV:\n" .. table.concat(open_errors, "\n"))
 end
 
 trace:write(table.concat({

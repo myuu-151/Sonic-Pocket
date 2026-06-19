@@ -11,10 +11,12 @@ does not modify emulated memory or require a debugger.
 4. Open or drag in `scripts/bizhawk-player-trace.lua`.
 5. Confirm that a small `TRACE` overlay appears in the game window.
 
-The script writes `out/player-runtime-trace.csv`. The Lua Console also prints
-the selected main-memory domain and address adjustment. If the script reports
-an address-range error, save the Lua Console text; that identifies the memory
-domain mismatch we need to correct.
+The script normally writes `out/player-runtime-trace.csv`. The Lua Console
+prints the exact path it successfully opened, along with the selected
+main-memory domain and address adjustment. As a final fallback it writes
+`player-runtime-trace.csv` in BizHawk's working directory. If the script
+reports an address-range error, save the Lua Console text; that identifies the
+memory-domain mismatch we need to correct.
 
 ## Perform one short capture
 
