@@ -58,6 +58,13 @@ struct SpriteFrame {
     float origin_y = 0.0F;
 };
 
+enum class AnimationState {
+    Idle,
+    Run,
+    Jump,
+    Fall,
+};
+
 struct Application {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
@@ -78,6 +85,8 @@ struct Player {
     float velocity_y = 0.0F;
     bool grounded = false;
     bool facing_left = false;
+    AnimationState animation_state = AnimationState::Idle;
+    float animation_time = 0.0F;
 };
 
 struct CollisionMask {
@@ -249,6 +258,40 @@ float approach(float value, float target, float amount) {
     return std::max(value - amount, target);
 }
 
+std::string_view animation_state_name(AnimationState state) {
+    switch (state) {
+        case AnimationState::Idle:
+            return "idle";
+        case AnimationState::Run:
+            return "run";
+        case AnimationState::Jump:
+            return "jump";
+        case AnimationState::Fall:
+            return "fall";
+    }
+    return "unknown";
+}
+
+AnimationState choose_animation_state(const Player& player) {
+    if (!player.grounded) {
+        return player.velocity_y < 0.0F ? AnimationState::Jump : AnimationState::Fall;
+    }
+    if (std::abs(player.velocity_x) > 8.0F) {
+        return AnimationState::Run;
+    }
+    return AnimationState::Idle;
+}
+
+void update_animation(Player& player, float delta_seconds) {
+    const AnimationState next_state = choose_animation_state(player);
+    if (next_state != player.animation_state) {
+        player.animation_state = next_state;
+        player.animation_time = 0.0F;
+        return;
+    }
+    player.animation_time += delta_seconds;
+}
+
 void reset_player(Player& player, const CollisionMask& collision) {
     player = {};
     const int surface = collision.first_solid_y(
@@ -256,6 +299,8 @@ void reset_player(Player& player, const CollisionMask& collision) {
     player.y =
         static_cast<float>(surface >= 0 ? surface : 568) - kPlayerHalfHeight;
     player.grounded = true;
+    player.animation_state = AnimationState::Idle;
+    player.animation_time = 0.0F;
 }
 
 void update_player(Player& player, const CollisionMask& collision,
@@ -339,6 +384,28 @@ void update_camera(float& camera_x, float& camera_y, const Player& player,
         player.y - 76.0F, kCameraMinY, kCameraMaxY);
     camera_x = approach(camera_x, target_x, 150.0F * delta_seconds);
     camera_y = approach(camera_y, target_y, 150.0F * delta_seconds);
+}
+
+const SpriteFrame& select_animation_frame(
+    const Player& player,
+    const std::vector<SpriteFrame>& run_frames,
+    const SpriteFrame& jump_frame) {
+    switch (player.animation_state) {
+        case AnimationState::Idle:
+            return run_frames[0];
+        case AnimationState::Run: {
+            const float speed_factor = std::clamp(
+                std::abs(player.velocity_x) / kMaxRunSpeed, 0.35F, 1.0F);
+            const int frame_index = 1 + (
+                static_cast<int>(player.animation_time * 10.0F * speed_factor) % 3
+            );
+            return run_frames[frame_index];
+        }
+        case AnimationState::Jump:
+        case AnimationState::Fall:
+            return jump_frame;
+    }
+    return run_frames[0];
 }
 
 bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
@@ -484,7 +551,6 @@ int main(int argc, char* argv[]) {
     bool running = true;
     bool show_collision = false;
     bool jump_pressed = false;
-    float animation_time = 0.0F;
     Uint64 previous_ticks = SDL_GetTicks();
 
     while (running) {
@@ -568,23 +634,18 @@ int main(int argc, char* argv[]) {
             std::clamp(movement_x, -1.0F, 1.0F),
             jump_pressed, delta_seconds);
         jump_pressed = false;
-        animation_time += delta_seconds;
+        update_animation(player, delta_seconds);
         update_camera(camera_x, camera_y, player, delta_seconds);
-        const SpriteFrame* sonic_frame = &run_frames[0];
-        if (!player.grounded) {
-            sonic_frame = &jump_frame;
-        } else if (std::abs(player.velocity_x) > 8.0F) {
-            const float speed_factor = std::clamp(std::abs(player.velocity_x) / kMaxRunSpeed, 0.35F, 1.0F);
-            const int frame_index = 1 + (static_cast<int>(animation_time * 10.0F * speed_factor) % 3);
-            sonic_frame = &run_frames[frame_index];
-        }
+        const SpriteFrame& sonic_frame = select_animation_frame(
+            player, run_frames, jump_frame);
 
         const std::string title =
             "Sonic Pocket - Camera " +
             std::to_string(static_cast<int>(camera_x)) + ", " +
             std::to_string(static_cast<int>(camera_y)) + " - Sonic " +
             std::to_string(static_cast<int>(player.x)) + ", " +
-            std::to_string(static_cast<int>(player.y)) +
+            std::to_string(static_cast<int>(player.y)) + " - " +
+            std::string(animation_state_name(player.animation_state)) +
             (show_collision ? " - Collision ON" : "");
         SDL_SetWindowTitle(app.window, title.c_str());
 
@@ -592,7 +653,7 @@ int main(int argc, char* argv[]) {
                 app,
                 stage.value,
                 collision.value,
-                *sonic_frame,
+                sonic_frame,
                 player,
                 camera_x,
                 camera_y,

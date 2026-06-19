@@ -57,6 +57,11 @@ from the level's Plane 2 collision data. It is intentionally simple: no rolling,
 springs, enemies, object interaction, full animation script interpreter, or
 exact player physics yet.
 
+The animation layer is now explicit instead of being hard-wired to render
+conditions. The prototype tracks `idle`, `run`, `jump`, and `fall` states,
+resets animation time on state changes, and displays the current state in the
+window title for debugging.
+
 Camera movement uses the original stage bounds: X starts at 64 and ends 224
 pixels before the layout edge; Y starts at 64 and ends 216 pixels before the
 layout edge. The extracted map includes the game's 64-pixel guard band, so the
