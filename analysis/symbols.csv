@@ -37,6 +37,11 @@ address,name,kind,confidence,notes
 0x399EF2,player_state_walk,function,confirmed,Applies ground acceleration collision and animation while moving
 0x399F3B,player_enter_roll,function,confirmed,Selects the shorter rolling collision bounds and enters rolling movement
 0x399F48,player_state_roll,function,confirmed,Applies rolling ground physics collision jump checks and exit at low speed
+0x39A98A,player_enter_spring_launch,function,confirmed,Selects the spring-launch animation and transfers the object-supplied velocity to common airborne movement
+0x39A9BF,player_enter_death,function,confirmed,Starts the death animation and upward launch before entering the death-motion state
+0x39A9EA,player_state_death_motion,function,confirmed,Integrates the death arc with normal gravity until the player crosses the camera boundary
+0x39AA11,player_state_death_delay,function,confirmed,Waits after the death arc leaves view before the player task is removed
+0x39AA54,player_enter_hurt,function,confirmed,Applies horizontal knockback vertical launch and invulnerability after damage
 0x39AA86,player_enter_jump,function,confirmed,Applies jump velocity along the surface normal and enters airborne movement
 0x39AABA,set_player_airborne_flags,function,confirmed,Sets task flag bit 1 clears bit 7 and detaches the player from the supporting object
 0x39AAC6,player_enter_airborne,function,confirmed,Applies airborne flags and changes the task function to the common airborne state

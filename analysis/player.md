@@ -137,7 +137,30 @@ Once airborne, `relax_airborne_surface_angle` at `0x39ABCA` moved the angle
 `0x40`, `0x3C`, `0x38`, and so on toward zero by four units per gameplay tick.
 
 See [runtime-trace-001.md](runtime-trace-001.md) and
-[runtime-trace-002.md](runtime-trace-002.md) for captured checkpoints.
+[runtime-trace-002.md](runtime-trace-002.md), and
+[runtime-trace-003.md](runtime-trace-003.md) for captured checkpoints.
+
+## Hurt, death, and spring launch
+
+`player_enter_hurt` at `0x39AA54` applies horizontal knockback of `0x0200`
+away from the damaging object and a normal upward impulse of `0x0600`. It sets
+task offset `+0x48` to `0x3C`, enables airborne movement, and uses the common
+airborne state for gravity and collision. The first post-hit trace sample is
+therefore `0x0580` after one `0x0080` gravity step.
+
+The death path consists of three states:
+
+- `player_enter_death` at `0x39A9BF` clears horizontal velocity, sets movement
+  flags `0x18`, and launches upward at `0x0800`.
+- `player_state_death_motion` at `0x39A9EA` subtracts `0x0080` gravity and
+  integrates Y until the player crosses the camera boundary.
+- `player_state_death_delay` at `0x39AA11` holds the final position until the
+  task is removed and the stage restart begins.
+
+The captured vertical spring supplied Y velocity `0x0D00` before selecting
+`player_enter_spring_launch` at `0x39A98A`. That entry chooses the spring
+animation, applies airborne flags, clears compact collision mode, and returns
+to `player_state_airborne`. The next tick records `0x0C80` after gravity.
 
 ## Collision overview
 
@@ -148,8 +171,8 @@ sensor pipeline and scratch layout are recorded in [collision.md](collision.md).
 
 ## Still to map
 
-The next player pass should assign names to the hurt, death, and spring states
-and finish the remaining movement flag bits. A short-tap jump trace can confirm
-the variable-height velocity clamp. Movement flag `+0x14` bit 7 controls facing
-and horizontal mirroring; another directed trace will establish its exact
+The next player pass should finish the remaining movement flag bits and trace
+camera and stage-object state. A short-tap jump trace can confirm the
+variable-height velocity clamp. Movement flag `+0x14` bit 7 controls facing and
+horizontal mirroring; another directed trace will establish its exact
 polarity.
