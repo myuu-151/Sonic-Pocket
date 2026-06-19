@@ -898,6 +898,34 @@ void update_dust_puffs(Player& player) {
         player.dust_puffs.end());
 }
 
+int rom_sub_399cb1_slope_delta(const Player& player, int factor) {
+    int angle = player.ground_angle & 0xFF;
+    if (player.facing_left) {
+        angle = (angle + 0x80) & 0xFF;
+    }
+
+    int sine = rom_do_sine_lookup(angle, kFixedOne).second;
+    if (sine >= 0xB5) {
+        sine += sine / 2;
+    }
+    return rom_mul_shift_8(sine, factor);
+}
+
+void rom_sub_399c88_apply_slope_force(Player& player) {
+    const int angle_window = ((player.ground_angle & 0xFF) + 0x40) & 0xFF;
+    if (angle_window > 0x80) {
+        return;
+    }
+
+    int signed_speed = signed_ground_speed(player);
+    signed_speed -= rom_sub_399cb1_slope_delta(player, 0x30);
+    signed_speed = std::clamp(
+        signed_speed, -kGroundSlopeMaxSpeed, kGroundSlopeMaxSpeed);
+
+    player.facing_left = signed_speed < 0;
+    player.ground_speed = std::abs(signed_speed);
+}
+
 int signed_angle_to_ground_force(int angle) {
     if (angle == 0x29) {
         return -0x3C;

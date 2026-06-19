@@ -82,3 +82,34 @@ Port these as a grouped replacement for the current guessed grounded physics:
 5. `sub_39ABEC` for air-to-ground speed conversion
 
 Keep the replay harness as the regression check after each replacement.
+
+## Representation mismatch found during first port attempt
+
+The current viewer mostly treats `Player::ground_speed` as a positive magnitude
+and uses `Player::facing_left` to derive signed movement. The ROM does not work
+that way consistently:
+
+- `XIZ+18h` is a raw signed ground-speed word.
+- `XIZ+14h` bit 7 is still an independent facing flag.
+- `Plr_CalcXYSpeed` adds `80h` to the angle if facing left, then passes the raw
+  signed `XIZ+18h` to `DoSineLookup`.
+- `sub_399C88/sub_399CB1` also adjusts the angle by facing, but subtracts the
+  resulting slope delta from the raw signed `XIZ+18h`.
+
+This matters on the NSI loop/ramp trace:
+
+- After the wall/loop reattach, the ROM has negative ground speed while the
+  facing-left bit is not set.
+- Later, while holding left on flat ground, the ROM has positive ground speed
+  while the facing-left bit is set.
+
+So a correct ROM-order port needs to refactor the viewer state first:
+
+1. Store raw signed ground speed.
+2. Keep facing as a separate flag.
+3. Replace magnitude checks with `abs(ground_speed)`.
+4. Port `sub_399C88`, `sub_399443`, and `Plr_CalcXYSpeed` together.
+
+Activating only `sub_399C88` against the old magnitude-based state regressed the
+trace, so the active viewer path was left on the trace-matched implementation
+until this signed-speed refactor is done.
