@@ -75,16 +75,28 @@ struct AnimationSequence {
 
 struct SonicAnimations {
     AnimationSequence idle;
+    AnimationSequence walk;
     AnimationSequence run;
+    AnimationSequence skid;
     AnimationSequence jump;
     AnimationSequence fall;
+    AnimationSequence push;
+    AnimationSequence look_up;
+    AnimationSequence look_down;
+    AnimationSequence balance;
 };
 
 enum class AnimationState {
     Idle,
+    Walk,
     Run,
+    Skid,
     Jump,
     Fall,
+    Push,
+    LookUp,
+    LookDown,
+    Balance,
 };
 
 struct Application {
@@ -110,6 +122,9 @@ struct Player {
     bool facing_left = false;
     bool jump_held = false;
     bool walking_active = false;
+    int movement_input = 0;
+    bool input_up = false;
+    bool input_down = false;
     AnimationState animation_state = AnimationState::Idle;
     float animation_time = 0.0F;
     float air_time = 0.0F;
@@ -330,12 +345,24 @@ std::string_view animation_state_name(AnimationState state) {
     switch (state) {
         case AnimationState::Idle:
             return "idle";
+        case AnimationState::Walk:
+            return "walk";
         case AnimationState::Run:
             return "run";
+        case AnimationState::Skid:
+            return "skid";
         case AnimationState::Jump:
             return "jump";
         case AnimationState::Fall:
             return "fall";
+        case AnimationState::Push:
+            return "push";
+        case AnimationState::LookUp:
+            return "look_up";
+        case AnimationState::LookDown:
+            return "look_down";
+        case AnimationState::Balance:
+            return "balance";
     }
     return "unknown";
 }
@@ -344,9 +371,22 @@ AnimationState choose_animation_state(const Player& player) {
     if (!player.grounded && player.air_time >= kAnimationAirThreshold) {
         return player.velocity_y < 0 ? AnimationState::Jump : AnimationState::Fall;
     }
-    if (std::abs(player.ground_speed) > 0x100 ||
-        std::abs(player.velocity_x) > 0x100) {
-        return AnimationState::Run;
+    if (player.input_up && std::abs(player.ground_speed) < 0x100) {
+        return AnimationState::LookUp;
+    }
+    if (player.input_down && std::abs(player.ground_speed) < 0x100) {
+        return AnimationState::LookDown;
+    }
+    if (player.movement_input != 0 && player.ground_speed != 0 &&
+        ((player.movement_input > 0 && player.ground_speed < -0x300) ||
+         (player.movement_input < 0 && player.ground_speed > 0x300))) {
+        return AnimationState::Skid;
+    }
+    if (std::abs(player.ground_speed) > 0 ||
+        std::abs(player.velocity_x) > 0) {
+        return std::abs(player.ground_speed) >= 0x600
+            ? AnimationState::Run
+            : AnimationState::Walk;
     }
     return AnimationState::Idle;
 }
@@ -356,12 +396,24 @@ const AnimationSequence& animation_sequence(
     switch (state) {
         case AnimationState::Idle:
             return animations.idle;
+        case AnimationState::Walk:
+            return animations.walk;
         case AnimationState::Run:
             return animations.run;
+        case AnimationState::Skid:
+            return animations.skid;
         case AnimationState::Jump:
             return animations.jump;
         case AnimationState::Fall:
             return animations.fall;
+        case AnimationState::Push:
+            return animations.push;
+        case AnimationState::LookUp:
+            return animations.look_up;
+        case AnimationState::LookDown:
+            return animations.look_down;
+        case AnimationState::Balance:
+            return animations.balance;
     }
     return animations.idle;
 }
@@ -422,8 +474,12 @@ int approach_fixed(int value, int target, int amount) {
 }
 
 void update_player(Player& player, const CollisionMask& collision,
-                   int movement, bool jump_pressed, bool jump_held) {
+                   int movement, bool jump_pressed, bool jump_held,
+                   bool input_up, bool input_down) {
+    player.movement_input = movement;
     player.jump_held = jump_held;
+    player.input_up = input_up;
+    player.input_down = input_down;
 
     if (player.grounded) {
         if (movement != 0 && !player.walking_active &&
@@ -676,21 +732,51 @@ int main(int argc, char* argv[]) {
     Texture stage = load_png(app.renderer, stage_path);
     Texture collision = load_png(app.renderer, collision_path, true);
     SonicAnimations sonic_animations{
-        load_animation_sequence(app.renderer, data_directory, "idle", {60.0F, 3.0F, 20.0F}),
+        load_animation_sequence(
+            app.renderer,
+            data_directory,
+            "idle",
+            {60.0F, 3.0F, 20.0F, 30.0F, 10.0F, 10.0F,
+             10.0F, 10.0F, 10.0F, 10.0F, 10.0F, 10.0F,
+             10.0F, 10.0F, 10.0F, 10.0F, 35.0F, 20.0F}),
+        load_animation_sequence(
+            app.renderer,
+            data_directory,
+            "walk",
+            {4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F}),
         load_animation_sequence(
             app.renderer,
             data_directory,
             "run",
             {2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F}),
-        load_animation_sequence(app.renderer, data_directory, "jump", {1.0F}),
-        load_animation_sequence(app.renderer, data_directory, "fall", {1.0F}),
+        load_animation_sequence(app.renderer, data_directory, "skid", {20.0F, 3.0F}),
+        load_animation_sequence(
+            app.renderer,
+            data_directory,
+            "jump",
+            {1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F}),
+        load_animation_sequence(
+            app.renderer,
+            data_directory,
+            "fall",
+            {1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F}),
+        load_animation_sequence(app.renderer, data_directory, "push", {12.0F, 12.0F, 12.0F, 12.0F}),
+        load_animation_sequence(app.renderer, data_directory, "look_up", {10.0F, 10.0F, 10.0F}),
+        load_animation_sequence(app.renderer, data_directory, "look_down", {4.0F, 4.0F, 4.0F}),
+        load_animation_sequence(app.renderer, data_directory, "balance", {10.0F, 10.0F}),
     };
     CollisionMask collision_mask = load_collision_mask(collision_mask_path);
     if (stage.value == nullptr || collision.value == nullptr ||
         !animation_sequence_loaded(sonic_animations.idle) ||
+        !animation_sequence_loaded(sonic_animations.walk) ||
         !animation_sequence_loaded(sonic_animations.run) ||
+        !animation_sequence_loaded(sonic_animations.skid) ||
         !animation_sequence_loaded(sonic_animations.jump) ||
         !animation_sequence_loaded(sonic_animations.fall) ||
+        !animation_sequence_loaded(sonic_animations.push) ||
+        !animation_sequence_loaded(sonic_animations.look_up) ||
+        !animation_sequence_loaded(sonic_animations.look_down) ||
+        !animation_sequence_loaded(sonic_animations.balance) ||
         collision_mask.pixels.empty()) {
         return 1;
     }
@@ -790,6 +876,8 @@ int main(int argc, char* argv[]) {
         movement_x -= keyboard[SDL_SCANCODE_LEFT] || keyboard[SDL_SCANCODE_A];
         bool jump_held =
             keyboard[SDL_SCANCODE_SPACE] || keyboard[SDL_SCANCODE_Z];
+        bool input_up = keyboard[SDL_SCANCODE_UP] || keyboard[SDL_SCANCODE_W];
+        bool input_down = keyboard[SDL_SCANCODE_DOWN] || keyboard[SDL_SCANCODE_S];
 
         if (app.gamepad != nullptr) {
             const float analog_x = normalized_axis(SDL_GetGamepadAxis(
@@ -800,6 +888,10 @@ int main(int argc, char* argv[]) {
                 app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
             movement_x -= SDL_GetGamepadButton(
                 app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+            input_up = input_up ||
+                SDL_GetGamepadButton(app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP);
+            input_down = input_down ||
+                SDL_GetGamepadButton(app.gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
             jump_held = jump_held ||
                 SDL_GetGamepadButton(app.gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
         }
@@ -811,7 +903,9 @@ int main(int argc, char* argv[]) {
                 player, collision_mask,
                 std::clamp(movement_x, -1, 1),
                 jump_pressed,
-                jump_held);
+                jump_held,
+                input_up,
+                input_down);
             jump_pressed = false;
             update_animation(player, sonic_animations, kAnimationTickSeconds);
             simulation_accumulator -= kFixedFrameSeconds;

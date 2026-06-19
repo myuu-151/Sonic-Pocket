@@ -33,13 +33,62 @@ SONIC_CANVAS_HEIGHT = 64
 SONIC_CANVAS_ORIGIN_X = 32
 SONIC_CANVAS_ORIGIN_Y = 40
 SONIC_ANIMATIONS = {
-    # PAniScr_398737: standing blink/idle loop.
-    "idle": ((0x0009, 60), (0x000A, 3), (0x000B, 20)),
-    # PAniScr_398CD7 / asLoc_398CE7: fast ground cycle.
+    # PAniScr_3987F1: standing blink followed by the longer waiting loop.
+    "idle": (
+        (0x0009, 60),
+        (0x000A, 3),
+        (0x000B, 20),
+        (0x0065, 30),
+        (0x0066, 10),
+        (0x0065, 10),
+        (0x0066, 10),
+        (0x0065, 10),
+        (0x0066, 10),
+        (0x0065, 10),
+        (0x0066, 10),
+        (0x0065, 10),
+        (0x0066, 10),
+        (0x0065, 10),
+        (0x0066, 10),
+        (0x0065, 10),
+        (0x0067, 35),
+        (0x0065, 20),
+    ),
+    # PAniScr_398909: normal walking loop.
+    "walk": tuple((sprite_id, 4) for sprite_id in range(0x0001, 0x0009)),
+    # PAniScr_398CD7 / asLoc_398CE7: fast ground cycle used by scripted movement.
     "run": tuple((sprite_id, 2) for sprite_id in range(0x0001, 0x0009)),
-    # PAniScr_398CD1: airborne/spin player sprite.
-    "jump": ((0x0055, 1),),
-    "fall": ((0x0055, 1),),
+    # PAniScr_3988DD: skid/turnaround.
+    "skid": ((0x000C, 20), (0x000D, 3)),
+    # PAniScr_398B20: jump/spin.
+    "jump": (
+        (0x0012, 1),
+        (0x0016, 1),
+        (0x0014, 1),
+        (0x0015, 1),
+        (0x0012, 1),
+        (0x0013, 1),
+        (0x0016, 1),
+        (0x0015, 1),
+    ),
+    "fall": (
+        (0x0012, 1),
+        (0x0016, 1),
+        (0x0014, 1),
+        (0x0015, 1),
+        (0x0012, 1),
+        (0x0013, 1),
+        (0x0016, 1),
+        (0x0015, 1),
+    ),
+    # PAniScr_398A1D: pushing.
+    "push": ((0x003B, 12), (0x003C, 12), (0x003D, 12), (0x003E, 12)),
+    # PAniScr_3989B3 / 3989D2: looking up.
+    "look_up": ((0x003F, 10), (0x0040, 10), (0x0041, 10)),
+    # PAniScr_3989EB / 398A04: looking down / crouch.
+    "look_down": ((0x0056, 4), (0x0057, 4), (0x0058, 4)),
+    # PAniScr_398A3C: act-clear / balance-like pose loop.
+    "balance": ((0x0053, 10), (0x0054, 10)),
 }
 
 
