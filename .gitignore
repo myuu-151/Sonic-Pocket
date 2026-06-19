@@ -1,0 +1,20 @@
+# Original game data must never be committed.
+Rom/
+*.ngc
+*.ngp
+*.npc
+*.bin
+
+# Generated analysis and build output
+build/
+out/
+*.mid
+*.wav
+*.trace
+
+# Local editor and operating-system files
+.vs/
+.vscode/
+*.user
+.DS_Store
+Thumbs.db
