@@ -181,7 +181,6 @@ struct Player {
 };
 
 int facing_sign(const Player& player);
-int signed_ground_speed(const Player& player);
 int ground_velocity_x(const Player& player);
 int ground_velocity_y(const Player& player);
 bool input_matches_facing(const Player& player, int movement);
@@ -687,27 +686,13 @@ int facing_sign(const Player& player) {
     return player.facing_left ? -1 : 1;
 }
 
-float ground_angle_radians(const Player& player) {
-    constexpr float pi = 3.14159265358979323846F;
-    return static_cast<float>(player.ground_angle) * pi / 128.0F;
-}
-
-int signed_ground_speed(const Player& player) {
+int ground_velocity_x(const Player& player) {
     return facing_sign(player) * player.ground_speed;
 }
 
-int ground_velocity_x(const Player& player) {
-    const float projected =
-        std::cos(ground_angle_radians(player)) *
-        static_cast<float>(signed_ground_speed(player));
-    return static_cast<int>(std::round(projected));
-}
-
 int ground_velocity_y(const Player& player) {
-    const float projected =
-        -std::sin(ground_angle_radians(player)) *
-        static_cast<float>(signed_ground_speed(player));
-    return static_cast<int>(std::round(projected));
+    (void)player;
+    return 0;
 }
 
 bool input_matches_facing(const Player& player, int movement) {
@@ -889,7 +874,7 @@ void update_player(Player& player, const CollisionMask& collision,
     if (player.grounded) {
         const int slope_force = signed_angle_to_ground_force(player.ground_angle);
         if (slope_force != 0) {
-            int signed_speed = signed_ground_speed(player) + slope_force;
+            int signed_speed = ground_velocity_x(player) + slope_force;
             signed_speed = std::clamp(signed_speed, -kGroundMaxSpeed, kGroundMaxSpeed);
             if (signed_speed != 0) {
                 player.facing_left = signed_speed < 0;
