@@ -1,0 +1,2 @@
+# Unified diffs preserve the upstream source's tab indentation as patch data.
+patches/*.patch -whitespace

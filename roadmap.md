@@ -29,7 +29,7 @@ can reproduce the expected checkpoints without manual interaction.
 - [x] Produce the first TLCS-900/H entry-point disassembly.
 - [x] Start a human-authored symbol database.
 - [x] Identify the interrupt-handler structure at `0x2000A0`.
-- [ ] Install Ghidra with the
+- [x] Install and pin Ghidra with the
       [TLCS-900/H processor module](https://github.com/nevesnunes/ghidra-tlcs900h)
       and
       [Neo Geo Pocket loader](https://github.com/nevesnunes/ghidra-neogeopocket-loader).

@@ -1,0 +1,26 @@
+diff --git a/src/main/java/neogeopocketloader/NeoGeoPocketLoader.java b/src/main/java/neogeopocketloader/NeoGeoPocketLoader.java
+index 01e0155..6e00049 100644
+--- a/src/main/java/neogeopocketloader/NeoGeoPocketLoader.java
++++ b/src/main/java/neogeopocketloader/NeoGeoPocketLoader.java
+@@ -31,7 +31,6 @@ import docking.widgets.filechooser.GhidraFileChooser;
+ import ghidra.app.cmd.data.CreateArrayCmd;
+ import ghidra.app.cmd.data.CreateDataCmd;
+ import ghidra.app.cmd.disassemble.DisassembleCommand;
+-import ghidra.app.util.Option;
+ import ghidra.app.util.bin.BinaryReader;
+ import ghidra.app.util.bin.ByteProvider;
+ import ghidra.app.util.bin.MemoryByteProvider;
+@@ -77,9 +76,11 @@ public class NeoGeoPocketLoader extends AbstractLibrarySupportLoader {
+ 	}
+ 
+ 	@Override
+-	protected void load(ByteProvider provider, LoadSpec loadSpec, List<Option> options,
+-			Program program, TaskMonitor monitor, MessageLog log)
++	protected void load(Program program, ImporterSettings settings)
+ 			throws CancelledException, IOException {
++		ByteProvider provider = settings.provider();
++		TaskMonitor monitor = settings.monitor();
++		MessageLog log = settings.log();
+ 		BinaryReader reader = new BinaryReader(provider, true);
+ 		FlatProgramAPI fpa = new FlatProgramAPI(program, monitor);
+ 

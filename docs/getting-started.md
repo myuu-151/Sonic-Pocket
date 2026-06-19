@@ -31,6 +31,18 @@ The loader applies the cartridge mapping and labels known BIOS functions and
 I/O ports. The processor module provides both disassembly and developing p-code
 semantics, which is considerably more useful than a flat assembly listing.
 
+The pinned Windows toolchain is recorded in `config/toolchain.json`. A local
+portable installation belongs under the ignored `Tools/` directory and can be
+started with:
+
+```powershell
+.\scripts\launch-ghidra.ps1
+```
+
+The NGPC loader predates Ghidra 12's simplified loader API. Apply
+`patches/ghidra-neogeopocket-loader-ghidra12.patch` before building it against
+the pinned Ghidra release.
+
 For a quick entry-point listing, build
 [NGDis](https://github.com/jounikor/ngdis) locally and run:
 

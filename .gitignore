@@ -8,6 +8,9 @@ Rom/
 # Local reference emulator installation
 Emu/
 
+# Local reverse-engineering applications and SDKs
+Tools/
+
 # Generated analysis and build output
 build/
 out/

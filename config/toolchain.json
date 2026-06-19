@@ -1,0 +1,24 @@
+{
+  "ghidra": {
+    "version": "12.1.2",
+    "release": "Ghidra_12.1.2_build",
+    "archive": "ghidra_12.1.2_PUBLIC_20260605.zip",
+    "sha256": "b62e81a0390618466c019c60d8c2f796ced2509c4c1aea4a37644a77272cf99d",
+    "url": "https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.2_build"
+  },
+  "java": {
+    "distribution": "Eclipse Temurin",
+    "version": "21.0.11+10",
+    "archive": "OpenJDK21U-jdk_x64_windows_hotspot_21.0.11_10.zip",
+    "sha256": "d3625e7cadf23787ea540229544b6e2ab494b3b54da1801879e583e1dfee0a64"
+  },
+  "tlcs900h_processor": {
+    "repository": "https://github.com/nevesnunes/ghidra-tlcs900h",
+    "commit": "9dd03c2628e063b0bd657f4b376d5112e9f39f59"
+  },
+  "ngpc_loader": {
+    "repository": "https://github.com/nevesnunes/ghidra-neogeopocket-loader",
+    "commit": "88a637de2819eab9e114bec6775d0ed6aa11889a",
+    "compatibility_patch": "patches/ghidra-neogeopocket-loader-ghidra12.patch"
+  }
+}
