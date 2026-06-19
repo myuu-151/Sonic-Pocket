@@ -50,6 +50,14 @@ struct Texture {
     ~Texture() { SDL_DestroyTexture(value); }
 };
 
+struct SpriteFrame {
+    Texture texture;
+    float width = 0.0F;
+    float height = 0.0F;
+    float origin_x = 0.0F;
+    float origin_y = 0.0F;
+};
+
 struct Application {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
@@ -124,6 +132,21 @@ Texture load_png(SDL_Renderer* renderer, const std::filesystem::path& path,
     }
     SDL_SetTextureScaleMode(texture.value, SDL_SCALEMODE_NEAREST);
     return texture;
+}
+
+SpriteFrame load_sprite_frame(SDL_Renderer* renderer,
+                              const std::filesystem::path& path,
+                              float origin_x, float origin_y) {
+    SpriteFrame frame;
+    frame.texture = load_png(renderer, path);
+    frame.origin_x = origin_x;
+    frame.origin_y = origin_y;
+    if (frame.texture.value != nullptr &&
+        !SDL_GetTextureSize(frame.texture.value, &frame.width, &frame.height)) {
+        fail("Unable to read sprite texture size");
+        frame.texture = {};
+    }
+    return frame;
 }
 
 CollisionMask load_collision_mask(const std::filesystem::path& path) {
@@ -319,7 +342,7 @@ void update_camera(float& camera_x, float& camera_y, const Player& player,
 }
 
 bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
-                  SDL_Texture* sonic, const Player& player,
+                  const SpriteFrame& sonic, const Player& player,
                   float camera_x, float camera_y, bool show_collision) {
     SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
     SDL_RenderClear(app.renderer);
@@ -342,14 +365,14 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
     }
 
     SDL_FRect sonic_destination{
-        std::floor(player.x - camera_x - 9.0F),
-        std::floor(player.y - camera_y - 15.0F),
-        18.0F,
-        30.0F,
+        std::floor(player.x - camera_x - sonic.origin_x),
+        std::floor(player.y - camera_y - sonic.origin_y),
+        sonic.width,
+        sonic.height,
     };
     if (!SDL_RenderTextureRotated(
             app.renderer,
-            sonic,
+            sonic.texture.value,
             nullptr,
             &sonic_destination,
             0.0,
@@ -384,11 +407,11 @@ int main(int argc, char* argv[]) {
     const auto stage_path = data_directory / "stage.png";
     const auto collision_path = data_directory / "collision.png";
     const auto collision_mask_path = data_directory / "collision-mask.bin";
-    const auto sonic_path = data_directory / "sonic-idle.png";
+    const auto sonic_idle_path = data_directory / "sonic" / "idle.png";
     if (!std::filesystem::is_regular_file(stage_path) ||
         !std::filesystem::is_regular_file(collision_path) ||
         !std::filesystem::is_regular_file(collision_mask_path) ||
-        !std::filesystem::is_regular_file(sonic_path)) {
+        !std::filesystem::is_regular_file(sonic_idle_path)) {
         std::cerr << "Missing extracted stage data in " << data_directory << '\n'
                   << "Run: py -3 tools/extract_level.py\n";
         return 2;
@@ -424,10 +447,20 @@ int main(int argc, char* argv[]) {
 
     Texture stage = load_png(app.renderer, stage_path);
     Texture collision = load_png(app.renderer, collision_path, true);
-    Texture sonic = load_png(app.renderer, sonic_path);
+    std::vector<SpriteFrame> run_frames;
+    run_frames.push_back(load_sprite_frame(app.renderer, sonic_idle_path, 9.0F, 15.0F));
+    run_frames.push_back(load_sprite_frame(app.renderer, data_directory / "sonic" / "step0.png", 9.0F, 15.0F));
+    run_frames.push_back(load_sprite_frame(app.renderer, data_directory / "sonic" / "step1.png", 10.0F, 12.0F));
+    run_frames.push_back(load_sprite_frame(app.renderer, data_directory / "sonic" / "step2.png", 8.0F, 12.0F));
+    SpriteFrame jump_frame = load_sprite_frame(app.renderer, data_directory / "sonic" / "jump.png", 12.0F, 12.0F);
     CollisionMask collision_mask = load_collision_mask(collision_mask_path);
     if (stage.value == nullptr || collision.value == nullptr ||
-        sonic.value == nullptr || collision_mask.pixels.empty()) {
+        run_frames[0].texture.value == nullptr ||
+        run_frames[1].texture.value == nullptr ||
+        run_frames[2].texture.value == nullptr ||
+        run_frames[3].texture.value == nullptr ||
+        jump_frame.texture.value == nullptr ||
+        collision_mask.pixels.empty()) {
         return 1;
     }
 
@@ -439,7 +472,7 @@ int main(int argc, char* argv[]) {
 
     if (smoke_test) {
         if (!render_frame(
-                app, stage.value, collision.value, sonic.value, player,
+                app, stage.value, collision.value, run_frames[0], player,
                 camera_x, camera_y, true)) {
             return 1;
         }
@@ -451,6 +484,7 @@ int main(int argc, char* argv[]) {
     bool running = true;
     bool show_collision = false;
     bool jump_pressed = false;
+    float animation_time = 0.0F;
     Uint64 previous_ticks = SDL_GetTicks();
 
     while (running) {
@@ -534,7 +568,16 @@ int main(int argc, char* argv[]) {
             std::clamp(movement_x, -1.0F, 1.0F),
             jump_pressed, delta_seconds);
         jump_pressed = false;
+        animation_time += delta_seconds;
         update_camera(camera_x, camera_y, player, delta_seconds);
+        const SpriteFrame* sonic_frame = &run_frames[0];
+        if (!player.grounded) {
+            sonic_frame = &jump_frame;
+        } else if (std::abs(player.velocity_x) > 8.0F) {
+            const float speed_factor = std::clamp(std::abs(player.velocity_x) / kMaxRunSpeed, 0.35F, 1.0F);
+            const int frame_index = 1 + (static_cast<int>(animation_time * 10.0F * speed_factor) % 3);
+            sonic_frame = &run_frames[frame_index];
+        }
 
         const std::string title =
             "Sonic Pocket - Camera " +
@@ -549,7 +592,7 @@ int main(int argc, char* argv[]) {
                 app,
                 stage.value,
                 collision.value,
-                sonic.value,
+                *sonic_frame,
                 player,
                 camera_x,
                 camera_y,

@@ -51,11 +51,11 @@ Gamepads are supported too:
 - East face button: toggle collision
 - Back button: reset Sonic
 
-The viewer renders Sonic's idle frame from the user's ROM and drives a first
-native movement prototype over a byte-per-pixel collision mask generated from
-the level's Plane 2 collision data. It is intentionally simple: no rolling,
-springs, enemies, object interaction, animation state machine, or exact player
-physics yet.
+The viewer renders Sonic animation frames from the user's ROM and drives a
+first native movement prototype over a byte-per-pixel collision mask generated
+from the level's Plane 2 collision data. It is intentionally simple: no rolling,
+springs, enemies, object interaction, full animation script interpreter, or
+exact player physics yet.
 
 Camera movement uses the original stage bounds: X starts at 64 and ends 224
 pixels before the layout edge; Y starts at 64 and ends 216 pixels before the

@@ -101,8 +101,8 @@ state for regression testing.
 ## 5. Implement the native engine
 
 - [x] Implement the first native controllable Sonic prototype with ROM-extracted
-      sprite art, gravity, jump input, camera follow, and generated stage
-      collision mask.
+      sprite art, prototype animation frames, gravity, jump input, camera
+      follow, and generated stage collision mask.
 - [ ] Implement 60 Hz presentation with the observed deterministic 30 Hz
       player gameplay tick; verify cadence for other subsystems.
 - [ ] Reimplement object scheduling and state.

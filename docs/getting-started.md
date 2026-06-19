@@ -34,7 +34,8 @@ files under the ignored `out/nsi1/` directory:
 - `plane1.png` and `plane2.png`: separate 6400x992-pixel hardware planes
 - `collision.png`: color-coded path-1 collision tile values
 - `collision-mask.bin`: byte-per-pixel native prototype collision mask
-- `sonic-idle.png`: Sonic's ROM-extracted two-palette idle sprite
+- `sonic-idle.png` and `sonic/*.png`: Sonic's ROM-extracted two-palette
+  prototype animation frames
 - `objects.json`: the object screen table and decoded 10-byte placements
 - `manifest.json`: ROM hashes, offsets, palette IDs, and output metadata
 - `data/`: exact raw level segments extracted from the user's ROM

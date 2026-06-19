@@ -27,9 +27,12 @@ PALETTE_COLLECTION_OFFSET = 0x03C748
 PALETTE_COLLECTION_SIZE = 0x1800
 SPRITE_TILES_OFFSET = 0x00CB34
 SPRITE_TILES_SIZE = 0x2AA40
-SONIC_IDLE_LAYERS = (
-    (0x000B7C, 0x22, 0),
-    (0x000D7C, 0x16, 7),
+SONIC_FRAMES = (
+    ("idle", 0x000B7C, 0x22, 0x000D7C, 0x16),
+    ("step0", 0x000BC0, 0x22, 0x000DA8, 0x16),
+    ("step1", 0x000C54, 0x22, 0x000E00, 0x1A),
+    ("step2", 0x000C76, 0x26, 0x000E1A, 0x16),
+    ("jump", 0x000CBE, 0x26, 0x000E46, 0x0E),
 )
 
 
@@ -642,16 +645,32 @@ def extract(
     sprite_tiles = rom[
         SPRITE_TILES_OFFSET : SPRITE_TILES_OFFSET + SPRITE_TILES_SIZE
     ]
-    sonic_layers = [
-        (rom[offset : offset + size], palette_id)
-        for offset, size, palette_id in SONIC_IDLE_LAYERS
-    ]
-    sonic_width, sonic_height, sonic_origin_x, sonic_origin_y, sonic_rgba = (
-        render_sprite(sprite_tiles, palette_collection, sonic_layers)
-    )
-    write_png_rgba(
-        output / "sonic-idle.png", sonic_width, sonic_height, sonic_rgba
-    )
+    sonic_directory = output / "sonic"
+    sonic_directory.mkdir(exist_ok=True)
+    sonic_frames: list[dict[str, Any]] = []
+    for frame_name, layer0_offset, layer0_size, layer1_offset, layer1_size in SONIC_FRAMES:
+        frame_width, frame_height, frame_origin_x, frame_origin_y, frame_rgba = (
+            render_sprite(
+                sprite_tiles,
+                palette_collection,
+                [
+                    (rom[layer0_offset : layer0_offset + layer0_size], 0),
+                    (rom[layer1_offset : layer1_offset + layer1_size], 7),
+                ],
+            )
+        )
+        frame_filename = f"{frame_name}.png"
+        write_png_rgba(sonic_directory / frame_filename, frame_width, frame_height, frame_rgba)
+        if frame_name == "idle":
+            write_png_rgba(output / "sonic-idle.png", frame_width, frame_height, frame_rgba)
+        sonic_frames.append(
+            {
+                "name": frame_name,
+                "output": f"sonic/{frame_filename}",
+                "size": [frame_width, frame_height],
+                "origin": [frame_origin_x, frame_origin_y],
+            }
+        )
 
     objects = parse_objects(segments["objects"])
     (output / "objects.json").write_text(
@@ -689,14 +708,11 @@ def extract(
             "collision_path1": "collision.png",
             "sonic_idle": "sonic-idle.png",
         },
+        "sonic_frames": sonic_frames,
         "collision_mask": {
             "output": "collision-mask.bin",
             "size": [width, height],
             "solid_bytes": sum(1 for value in collision_mask if value),
-        },
-        "sonic_idle": {
-            "size": [sonic_width, sonic_height],
-            "origin": [sonic_origin_x, sonic_origin_y],
         },
         "reference_validation": validate_reference(segments, spec, reference),
     }
