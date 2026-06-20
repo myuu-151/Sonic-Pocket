@@ -95,6 +95,7 @@ struct SpriteFrame {
     float height = 0.0F;
     float origin_x = 0.0F;
     float origin_y = 0.0F;
+    float opaque_bottom_y = 0.0F;
 };
 
 struct AnimationFrame {
@@ -198,6 +199,7 @@ struct Player {
     bool pending_jump = false;
     bool jump_release_limited = false;
     bool walking_active = false;
+    bool pending_standing_hbox = false;
     int movement_input = 0;
     bool input_up = false;
     bool input_down = false;
@@ -416,13 +418,50 @@ Texture load_png(SDL_Renderer* renderer, const std::filesystem::path& path,
 
 SpriteFrame load_sprite_frame(SDL_Renderer* renderer,
                               const std::filesystem::path& path,
-                              float origin_x, float origin_y) {
+                              float origin_x, float origin_y,
+                              std::optional<float> foot_baseline = std::nullopt) {
     SpriteFrame frame;
-    frame.texture = load_png(renderer, path);
     frame.origin_x = origin_x;
     frame.origin_y = origin_y;
-    if (frame.texture.value != nullptr &&
-        !SDL_GetTextureSize(frame.texture.value, &frame.width, &frame.height)) {
+    frame.opaque_bottom_y = origin_y + foot_baseline.value_or(0.0F);
+
+    SDL_Surface* surface = SDL_LoadPNG(path.string().c_str());
+    if (surface == nullptr) {
+        fail("Unable to load " + path.string());
+        return frame;
+    }
+
+    if (foot_baseline.has_value()) {
+        SDL_Surface* rgba_surface = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+        if (rgba_surface != nullptr) {
+            int opaque_bottom = -1;
+            const auto* pixels = static_cast<const Uint8*>(rgba_surface->pixels);
+            for (int y = 0; y < rgba_surface->h; ++y) {
+                const Uint8* row = pixels + y * rgba_surface->pitch;
+                for (int x = 0; x < rgba_surface->w; ++x) {
+                    const Uint8 alpha = row[x * 4 + 3];
+                    if (alpha != 0) {
+                        opaque_bottom = y;
+                    }
+                }
+            }
+            if (opaque_bottom >= 0) {
+                frame.opaque_bottom_y = static_cast<float>(opaque_bottom);
+                frame.origin_y = static_cast<float>(opaque_bottom) - *foot_baseline;
+            }
+            SDL_DestroySurface(rgba_surface);
+        }
+    }
+
+    frame.texture = Texture{SDL_CreateTextureFromSurface(renderer, surface)};
+    SDL_DestroySurface(surface);
+    if (frame.texture.value == nullptr) {
+        fail("Unable to create texture for " + path.string());
+        return frame;
+    }
+    SDL_SetTextureScaleMode(frame.texture.value, SDL_SCALEMODE_NEAREST);
+
+    if (!SDL_GetTextureSize(frame.texture.value, &frame.width, &frame.height)) {
         fail("Unable to read sprite texture size");
         frame.texture = {};
     }
@@ -433,7 +472,8 @@ AnimationSequence load_animation_sequence(
     SDL_Renderer* renderer,
     const std::filesystem::path& data_directory,
     std::string_view name,
-    const std::vector<float>& durations) {
+    const std::vector<float>& durations,
+    std::optional<float> foot_baseline = std::nullopt) {
     AnimationSequence sequence;
     for (std::size_t index = 0; index < durations.size(); ++index) {
         char filename[32]{};
@@ -450,7 +490,8 @@ AnimationSequence load_animation_sequence(
                     renderer,
                     data_directory / "sonic" / filename,
                     32.0F,
-                    40.0F),
+                    40.0F,
+                    foot_baseline),
                 durations[index],
             });
     }
@@ -2048,6 +2089,98 @@ bool rom_has_ground_support(const Player& player, const CollisionMask& collision
     return (right.hit && right.delta_y != 0) || (left.hit && left.delta_y != 0);
 }
 
+void write_collision_debug_row(
+    std::ostream& output,
+    int frame,
+    const Player& player,
+    const CollisionMask& collision,
+    int movement,
+    bool jump_pressed,
+    bool jump_held,
+    bool was_grounded) {
+    const int center_x = player.x_raw / kFixedOne;
+    const int center_y = player.y_raw / kFixedOne;
+    const int rom_center_y = view_y_to_rom_y(center_y);
+    const int radius_x = player.body_half_width;
+    const int radius_y = player.body_half_height;
+    const int scan_x_length =
+        std::clamp(
+            std::abs((player.x_raw / kFixedOne) -
+                     (player.previous_x_raw / kFixedOne)) + 1,
+            1,
+            0x20);
+    const int scan_y_length =
+        std::clamp(
+            std::abs((player.y_raw / kFixedOne) -
+                     (player.previous_y_raw / kFixedOne)) + 1,
+            1,
+            0x20);
+    constexpr int kRomNoGroundScanLength = 8;
+    const int rom_floor_probe_y = rom_center_y - radius_y - 8;
+    const RomCollisionHit floor_right = rom_bg_coll_chk4(
+        collision,
+        center_x + radius_x,
+        rom_floor_probe_y,
+        kRomNoGroundScanLength);
+    const RomCollisionHit floor_left = rom_bg_coll_chk4(
+        collision,
+        center_x - radius_x,
+        rom_floor_probe_y,
+        kRomNoGroundScanLength);
+    const bool support = rom_has_ground_support(player, collision);
+    Player no_ground_probe = player;
+    const bool no_ground_recovered = rom_check_no_ground(no_ground_probe, collision);
+    Player landing_probe = player;
+    const bool landing_contact = update_ground_contact(landing_probe, collision);
+
+    output
+        << frame << ','
+        << movement << ','
+        << (jump_pressed ? 1 : 0) << ','
+        << (jump_held ? 1 : 0) << ','
+        << (was_grounded ? 1 : 0) << ','
+        << (player.grounded ? 1 : 0) << ','
+        << ((was_grounded && !player.grounded) ? 1 : 0) << ','
+        << player.x_raw << ','
+        << player.y_raw << ','
+        << center_x << ','
+        << center_y << ','
+        << player.previous_x_raw << ','
+        << player.previous_y_raw << ','
+        << player.ground_speed << ','
+        << player.velocity_x << ','
+        << player.velocity_y << ','
+        << (player.ground_angle & 0xFF) << ','
+        << radius_x << ','
+        << radius_y << ','
+        << scan_x_length << ','
+        << scan_y_length << ','
+        << rom_floor_probe_y << ','
+        << (support ? 1 : 0) << ','
+        << (no_ground_recovered ? 1 : 0) << ','
+        << (landing_contact ? 1 : 0) << ','
+        << (floor_left.hit ? 1 : 0) << ','
+        << floor_left.delta_y << ','
+        << floor_left.angle << ','
+        << floor_left.response << ','
+        << floor_left.collision_type << ','
+        << floor_left.local_x << ','
+        << floor_left.local_y << ','
+        << (floor_right.hit ? 1 : 0) << ','
+        << floor_right.delta_y << ','
+        << floor_right.angle << ','
+        << floor_right.response << ','
+        << floor_right.collision_type << ','
+        << floor_right.local_x << ','
+        << floor_right.local_y << ','
+        << no_ground_probe.x_raw << ','
+        << no_ground_probe.y_raw << ','
+        << (no_ground_probe.ground_angle & 0xFF) << ','
+        << landing_probe.x_raw << ','
+        << landing_probe.y_raw << ','
+        << (landing_probe.ground_angle & 0xFF) << '\n';
+}
+
 bool rom_should_leave_ground_at_low_speed(const Player& player) {
     const int angle_window = ((player.ground_angle & 0xFF) - 0x40) & 0xFF;
     if (angle_window > 0x80) {
@@ -2079,6 +2212,15 @@ void rom_leave_ground(Player& player) {
     player.grounded = false;
     player.jump_release_limited = false;
     player.walking_active = false;
+    player.pending_standing_hbox = false;
+}
+
+void rom_enter_standing_hbox(Player& player) {
+    player.body_half_width = 7;
+    if (player.body_half_height != 13) {
+        player.body_half_height = 13;
+        player.y_raw -= 3 * kFixedOne;
+    }
 }
 
 void rom_plr_air_drag(Player& player, int movement) {
@@ -2140,6 +2282,7 @@ void update_player(Player& player, const CollisionMask& collision,
     bool started_jump_this_tick = false;
     if (player.pending_jump && player.grounded) {
         player.pending_jump = false;
+        player.pending_standing_hbox = false;
         const auto [jump_impulse_x, rom_jump_impulse_y] =
             rom_do_sine_lookup((player.ground_angle + 0x40) & 0xFF, kJumpImpulse);
         player.velocity_x += jump_impulse_x;
@@ -2170,6 +2313,10 @@ void update_player(Player& player, const CollisionMask& collision,
     }
 
     if (player.grounded) {
+        if (player.pending_standing_hbox) {
+            rom_enter_standing_hbox(player);
+            player.pending_standing_hbox = false;
+        }
         rom_sub_399c88_apply_slope_force(player);
         rom_sub_399443(player, movement);
         if (ground_speed_magnitude(player) < kGroundStopThreshold &&
@@ -2225,9 +2372,20 @@ void update_player(Player& player, const CollisionMask& collision,
         const int projected_velocity_x = player.velocity_x;
         const int projected_velocity_y = player.velocity_y;
         if (projected_velocity_x == 0 && projected_velocity_y == 0) {
-            // The ROM does not run the walking "no ground" transition while the
-            // player is idle. Preserve the existing grounded state here; losing
-            // it makes the replay fall on frame 612 before any input happens.
+            // Plr_Stop still resolves ground contact while idle.  Use the same
+            // floor-contact snap that the moving path reaches, but do not use
+            // a failed snap as permission to leave ground; that was the source
+            // of the earlier idle air/ground flicker.
+            Player idle_probe = player;
+            if (update_ground_contact(idle_probe, collision, true)) {
+                const int correction_y = idle_probe.y_raw - player.y_raw;
+                if (std::abs(correction_y) <= 8 * kFixedOne) {
+                    player.y_raw = idle_probe.y_raw;
+                    player.ground_angle = idle_probe.ground_angle;
+                    player.ground_slope = idle_probe.ground_slope;
+                    player.air_time = 0.0F;
+                }
+            }
             player.grounded = true;
         } else {
         const int start_ground_angle = player.ground_angle & 0xFF;
@@ -2254,17 +2412,60 @@ void update_player(Player& player, const CollisionMask& collision,
             player.x_raw == moved_x_raw) {
             player.x_raw += kFixedOne;
         }
-        const bool missing_ground_support =
-            !rom_has_ground_support(player, collision);
-        const bool lost_ground =
-            missing_ground_support && !rom_check_no_ground(player, collision);
-        if (lost_ground || rom_should_leave_ground_at_low_speed(player)) {
+        // Plr_CheckNoGrnd calls sub_39B83E every walking/rolling frame.  On
+        // the wall sectors that routine is not just a yes/no support test: it
+        // also applies the +/-8px correction that keeps Sonic attached while
+        // crossing the 0x40 steep-slope boundary.  Keep the older floor-sector
+        // support gate for now, because the PC floor approximation already
+        // snaps once in apply_rom_walk_collision and a second floor correction
+        // regresses the replay by one pixel.
+        const int support_sector = (player.ground_angle + 0x20) & 0xFF;
+        const bool wall_sector =
+            (support_sector > 0x40 && support_sector <= 0x80) ||
+            (support_sector > 0xC0);
+        bool kept_ground = false;
+        if (wall_sector) {
+            for (int correction = 0; correction < 2; ++correction) {
+                const int before_x = player.x_raw;
+                const int before_y = player.y_raw;
+                const int before_angle = player.ground_angle & 0xFF;
+                if (!rom_check_no_ground(player, collision)) {
+                    break;
+                }
+                kept_ground = true;
+                const int next_sector = (player.ground_angle + 0x20) & 0xFF;
+                const bool still_wall_sector =
+                    (next_sector > 0x40 && next_sector <= 0x80) ||
+                    (next_sector > 0xC0);
+                if (
+                    !still_wall_sector ||
+                    (player.x_raw == before_x &&
+                     player.y_raw == before_y &&
+                     (player.ground_angle & 0xFF) == before_angle)) {
+                    break;
+                }
+            }
+        } else {
+            kept_ground =
+                rom_has_ground_support(player, collision) ||
+                rom_check_no_ground(player, collision);
+        }
+        if (kept_ground && !wall_sector) {
+            Player moving_floor_probe = player;
+            if (update_ground_contact(moving_floor_probe, collision, true)) {
+                const int correction_y = moving_floor_probe.y_raw - player.y_raw;
+                if (std::abs(correction_y) <= 4 * kFixedOne) {
+                    player.y_raw = moving_floor_probe.y_raw;
+                    player.ground_angle = moving_floor_probe.ground_angle;
+                    player.ground_slope = moving_floor_probe.ground_slope;
+                    player.air_time = 0.0F;
+                }
+            }
+        }
+        if (!kept_ground || rom_should_leave_ground_at_low_speed(player)) {
             rom_leave_ground(player);
         } else {
             player.grounded = true;
-        }
-        if (jump_pressed && player.grounded) {
-            player.pending_jump = true;
         }
         }
     } else if (player.velocity_y >= 0) {
@@ -2289,7 +2490,12 @@ void update_player(Player& player, const CollisionMask& collision,
                 player.velocity_y = landing_velocity_y;
             }
             player.walking_active = player.ground_speed != 0;
+            player.pending_standing_hbox = true;
         }
+    }
+
+    if (jump_pressed && player.grounded) {
+        player.pending_jump = true;
     }
 
     if (!player.grounded) {
@@ -2392,6 +2598,20 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
             nullptr,
             player.facing_left ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE)) {
         return fail("Unable to render Sonic");
+    }
+
+    if (show_collision) {
+        const float marker_x = std::floor(player.x() - camera_x);
+        const float collision_foot_y =
+            std::floor(player.y() + static_cast<float>(player.body_half_height) - camera_y);
+        const float sprite_foot_y =
+            std::floor(player.y() - camera_y - sonic.origin_y + sonic.opaque_bottom_y);
+        SDL_SetRenderDrawColor(app.renderer, 0, 255, 0, 255);
+        SDL_FRect collision_marker{marker_x - 2.0F, collision_foot_y, 5.0F, 1.0F};
+        SDL_RenderFillRect(app.renderer, &collision_marker);
+        SDL_SetRenderDrawColor(app.renderer, 255, 255, 0, 255);
+        SDL_FRect sprite_marker{marker_x - 2.0F, sprite_foot_y, 5.0F, 1.0F};
+        SDL_RenderFillRect(app.renderer, &sprite_marker);
     }
 
     SDL_RenderPresent(app.renderer);
@@ -2626,23 +2846,28 @@ int main(int argc, char* argv[]) {
             "idle",
             {60.0F, 3.0F, 20.0F, 30.0F, 10.0F, 10.0F,
              10.0F, 10.0F, 10.0F, 10.0F, 10.0F, 10.0F,
-             10.0F, 10.0F, 10.0F, 10.0F, 35.0F, 20.0F}),
+             10.0F, 10.0F, 10.0F, 10.0F, 35.0F, 20.0F},
+            kPlayerHalfHeight),
         load_animation_sequence(
             app.renderer,
             data_directory,
             "walk",
-            {4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F}),
+            {4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F, 4.0F},
+            kPlayerHalfHeight),
         load_animation_sequence(
             app.renderer,
             data_directory,
             "run",
-            {2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F}),
+            {2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F, 2.0F},
+            kPlayerHalfHeight),
         load_animation_sequence(
             app.renderer,
             data_directory,
             "peelout",
-            {1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F}),
-        load_animation_sequence(app.renderer, data_directory, "skid", {20.0F, 3.0F}),
+            {1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F},
+            kPlayerHalfHeight),
+        load_animation_sequence(
+            app.renderer, data_directory, "skid", {20.0F, 3.0F}, kPlayerHalfHeight),
         load_animation_sequence(
             app.renderer,
             data_directory,
@@ -2653,10 +2878,18 @@ int main(int argc, char* argv[]) {
             data_directory,
             "fall",
             {1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F}),
-        load_animation_sequence(app.renderer, data_directory, "push", {12.0F, 12.0F, 12.0F, 12.0F}),
-        load_animation_sequence(app.renderer, data_directory, "look_up", {10.0F, 10.0F, 10.0F}),
-        load_animation_sequence(app.renderer, data_directory, "look_down", {4.0F, 4.0F, 4.0F}),
-        load_animation_sequence(app.renderer, data_directory, "balance", {10.0F, 10.0F}),
+        load_animation_sequence(
+            app.renderer,
+            data_directory,
+            "push",
+            {12.0F, 12.0F, 12.0F, 12.0F},
+            kPlayerHalfHeight),
+        load_animation_sequence(
+            app.renderer, data_directory, "look_up", {10.0F, 10.0F, 10.0F}, kPlayerHalfHeight),
+        load_animation_sequence(
+            app.renderer, data_directory, "look_down", {4.0F, 4.0F, 4.0F}, kPlayerHalfHeight),
+        load_animation_sequence(
+            app.renderer, data_directory, "balance", {10.0F, 10.0F}, kPlayerHalfHeight),
     };
     AnimationSequence skid_dust = load_effect_sequence(
         app.renderer,
@@ -2701,9 +2934,29 @@ int main(int argc, char* argv[]) {
     }
 
     open_first_gamepad(app);
+    std::ofstream collision_debug{"out/native-collision-debug.csv"};
+    if (collision_debug) {
+        collision_debug
+            << "frame,movement,jump_pressed,jump_held,was_grounded,grounded,"
+               "left_ground,x_raw_16_8,y_raw_16_8,x_integer,y_integer,"
+               "previous_x_raw_16_8,previous_y_raw_16_8,ground_speed_s8_8,"
+               "x_velocity_s8_8,y_velocity_s8_8,surface_angle,collision_radius_x,"
+               "collision_radius_y,scan_x_length,scan_y_length,rom_floor_probe_y,"
+               "has_support,no_ground_recovered,landing_contact,"
+               "floor_left_hit,floor_left_delta_y,floor_left_angle,"
+               "floor_left_response,floor_left_collision_type,floor_left_local_x,"
+               "floor_left_local_y,floor_right_hit,floor_right_delta_y,"
+               "floor_right_angle,floor_right_response,floor_right_collision_type,"
+               "floor_right_local_x,floor_right_local_y,no_ground_x_raw_16_8,"
+               "no_ground_y_raw_16_8,no_ground_angle,landing_x_raw_16_8,"
+               "landing_y_raw_16_8,landing_angle\n";
+    } else {
+        std::cerr << "Warning: could not open out/native-collision-debug.csv\n";
+    }
     bool running = true;
     bool show_collision = false;
     bool jump_pressed = false;
+    int debug_frame = 0;
     Uint64 previous_ticks = SDL_GetTicks();
     float simulation_accumulator = 0.0F;
     constexpr float kFixedFrameSeconds = 1.0F / 30.0F;
@@ -2803,18 +3056,34 @@ int main(int argc, char* argv[]) {
         int simulation_steps = 0;
         while (simulation_accumulator >= kFixedFrameSeconds &&
                simulation_steps < 4) {
+            const int step_movement = std::clamp(movement_x, -1, 1);
+            const bool step_jump_pressed = jump_pressed;
+            const bool was_grounded = player.grounded;
             update_player(
                 player, collision_mask,
-                std::clamp(movement_x, -1, 1),
-                jump_pressed,
+                step_movement,
+                step_jump_pressed,
                 jump_held,
                 input_up,
                 input_down);
+            if (collision_debug) {
+                write_collision_debug_row(
+                    collision_debug,
+                    debug_frame,
+                    player,
+                    collision_mask,
+                    step_movement,
+                    step_jump_pressed,
+                    jump_held,
+                    was_grounded);
+                collision_debug.flush();
+            }
             jump_pressed = false;
             update_animation(player, sonic_animations, kAnimationTickSeconds);
             update_camera(camera_x, camera_y, camera_follow_x, player);
             simulation_accumulator -= kFixedFrameSeconds;
             ++simulation_steps;
+            ++debug_frame;
         }
         if (simulation_steps == 4) {
             simulation_accumulator = 0.0F;
