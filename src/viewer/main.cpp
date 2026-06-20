@@ -1283,11 +1283,15 @@ RomCollisionHit rom_bg_coll_chk3(
 }
 
 RomCollisionHit choose_bg_coll_chk4_pair(
-    const CollisionMask& collision, int center_x, int rom_y, int scan_length) {
+    const CollisionMask& collision,
+    int center_x,
+    int rom_y,
+    int scan_length,
+    int radius_x = kSlopeProbeRadius) {
     const RomCollisionHit right =
-        rom_bg_coll_chk4(collision, center_x + kSlopeProbeRadius, rom_y, scan_length);
+        rom_bg_coll_chk4(collision, center_x + radius_x, rom_y, scan_length);
     const RomCollisionHit left =
-        rom_bg_coll_chk4(collision, center_x - kSlopeProbeRadius, rom_y, scan_length);
+        rom_bg_coll_chk4(collision, center_x - radius_x, rom_y, scan_length);
     if (!left.hit) {
         return right;
     }
@@ -1327,16 +1331,17 @@ RomCollisionHit choose_bg_coll_chk4_retain_pair(
     int center_x,
     int rom_y,
     int scan_length,
-    int current_angle = -1) {
+    int current_angle = -1,
+    int radius_x = kSlopeProbeRadius) {
     const RomCollisionHit right = rom_bg_coll_chk4_window(
         collision,
-        center_x + kSlopeProbeRadius,
+        center_x + radius_x,
         rom_y,
         -kGroundRetainSnapDown,
         scan_length - 1);
     const RomCollisionHit left = rom_bg_coll_chk4_window(
         collision,
-        center_x - kSlopeProbeRadius,
+        center_x - radius_x,
         rom_y,
         -kGroundRetainSnapDown,
         scan_length - 1);
@@ -1358,11 +1363,15 @@ RomCollisionHit choose_bg_coll_chk4_retain_pair(
 }
 
 RomCollisionHit choose_bg_coll_chk3_pair(
-    const CollisionMask& collision, int center_x, int rom_y, int scan_length) {
+    const CollisionMask& collision,
+    int center_x,
+    int rom_y,
+    int scan_length,
+    int radius_x = kSlopeProbeRadius) {
     const RomCollisionHit right =
-        rom_bg_coll_chk3(collision, center_x + kSlopeProbeRadius, rom_y, scan_length);
+        rom_bg_coll_chk3(collision, center_x + radius_x, rom_y, scan_length);
     const RomCollisionHit left =
-        rom_bg_coll_chk3(collision, center_x - kSlopeProbeRadius, rom_y, scan_length);
+        rom_bg_coll_chk3(collision, center_x - radius_x, rom_y, scan_length);
     if (!left.hit) {
         return right;
     }
@@ -1373,18 +1382,22 @@ RomCollisionHit choose_bg_coll_chk3_pair(
 }
 
 RomHorizontalHit choose_bg_coll_chk1_pair(
-    const CollisionMask& collision, int x, int rom_center_y, int scan_length) {
+    const CollisionMask& collision,
+    int x,
+    int rom_center_y,
+    int scan_length,
+    int radius_y = static_cast<int>(kPlayerHalfHeight)) {
     const RomHorizontalHit bottom =
         rom_bg_coll_chk1(
             collision,
             x,
-            rom_center_y - static_cast<int>(kPlayerHalfHeight),
+            rom_center_y - radius_y,
             scan_length);
     const RomHorizontalHit top =
         rom_bg_coll_chk1(
             collision,
             x,
-            rom_center_y + static_cast<int>(kPlayerHalfHeight),
+            rom_center_y + radius_y,
             scan_length);
     if (!bottom.hit) {
         return top;
@@ -1396,18 +1409,22 @@ RomHorizontalHit choose_bg_coll_chk1_pair(
 }
 
 RomHorizontalHit choose_bg_coll_chk2_pair(
-    const CollisionMask& collision, int x, int rom_center_y, int scan_length) {
+    const CollisionMask& collision,
+    int x,
+    int rom_center_y,
+    int scan_length,
+    int radius_y = static_cast<int>(kPlayerHalfHeight)) {
     const RomHorizontalHit bottom =
         rom_bg_coll_chk2(
             collision,
             x,
-            rom_center_y - static_cast<int>(kPlayerHalfHeight),
+            rom_center_y - radius_y,
             scan_length);
     const RomHorizontalHit top =
         rom_bg_coll_chk2(
             collision,
             x,
-            rom_center_y + static_cast<int>(kPlayerHalfHeight),
+            rom_center_y + radius_y,
             scan_length);
     if (!bottom.hit) {
         return top;
@@ -1428,10 +1445,10 @@ int rom_angle_delta_abs(int next_angle, int current_angle) {
 
 int rom_collision_sector(const Player& player) {
     int angle = player.ground_angle & 0xFF;
-    if (player.velocity_x < 0) {
+    if (player.facing_left) {
         angle = (angle + 0x80) & 0xFF;
     }
-    if (player.velocity_y < 0) {
+    if (player.ground_speed < 0) {
         angle = (angle + 0x80) & 0xFF;
     }
     return (angle + 0x20) & 0xC0;
@@ -1442,13 +1459,15 @@ bool apply_rom_vertical_ground_pair(
     const CollisionMask& collision,
     int scan_y_length,
     bool retain_ground) {
-    (void)scan_y_length;
-    constexpr int kRomWalkGroundScanLength = 9;
+    const int rom_walk_ground_scan_length = std::clamp(
+        std::max(9, scan_y_length + 8), 9, 0x20);
     const int center_x = player.x_raw / kFixedOne;
     const int center_y = player.y_raw / kFixedOne;
     const int rom_center_y = view_y_to_rom_y(center_y);
-    const int rom_floor_probe_y = rom_center_y - static_cast<int>(kPlayerHalfHeight);
-    const int rom_ceiling_probe_y = rom_center_y + static_cast<int>(kPlayerHalfHeight);
+    const int radius_x = player.body_half_width;
+    const int radius_y = player.body_half_height;
+    const int rom_floor_probe_y = rom_center_y - radius_y;
+    const int rom_ceiling_probe_y = rom_center_y + radius_y;
 
     RomCollisionHit floor_hit =
         retain_ground ?
@@ -1456,13 +1475,14 @@ bool apply_rom_vertical_ground_pair(
                 collision,
                 center_x,
                 rom_floor_probe_y,
-                kRomWalkGroundScanLength,
-                player.ground_angle) :
+                rom_walk_ground_scan_length,
+                player.ground_angle,
+                radius_x) :
             choose_bg_coll_chk4_pair(
-                collision, center_x, rom_floor_probe_y, kRomWalkGroundScanLength);
+                collision, center_x, rom_floor_probe_y, rom_walk_ground_scan_length, radius_x);
     const RomCollisionHit ceiling_hit =
         choose_bg_coll_chk3_pair(
-            collision, center_x, rom_ceiling_probe_y, kRomWalkGroundScanLength);
+            collision, center_x, rom_ceiling_probe_y, rom_walk_ground_scan_length, radius_x);
 
     if (floor_hit.hit == ceiling_hit.hit) {
         if (!floor_hit.hit) {
@@ -1593,18 +1613,18 @@ bool apply_rom_vertical_ground_pair(
     const int left_surface = rom_y_to_view_y(
         rom_floor_probe_y + rom_bg_coll_chk4(
             collision,
-            center_x - kSlopeProbeRadius,
+            center_x - radius_x,
             rom_floor_probe_y,
-            kRomWalkGroundScanLength).delta_y);
+            rom_walk_ground_scan_length).delta_y);
     const int right_surface = rom_y_to_view_y(
         rom_floor_probe_y + rom_bg_coll_chk4(
             collision,
-            center_x + kSlopeProbeRadius,
+            center_x + radius_x,
             rom_floor_probe_y,
-            kRomWalkGroundScanLength).delta_y);
+            rom_walk_ground_scan_length).delta_y);
     player.ground_slope =
         static_cast<float>(right_surface - left_surface) /
-        static_cast<float>(kSlopeProbeRadius * 2);
+        static_cast<float>(radius_x * 2);
     return true;
 }
 
@@ -1620,7 +1640,9 @@ void apply_rom_walk_collision(
         const int center_y = player.y_raw / kFixedOne;
         const int rom_center_y = view_y_to_rom_y(center_y);
         const int angle = player.ground_angle & 0xFF;
-        int rom_y_offset = static_cast<int>(kPlayerHalfHeight);
+        const int radius_x = player.body_half_width;
+        const int radius_y = player.body_half_height;
+        int rom_y_offset = radius_y;
         if (sector == 0x40) {
             const int rotated = (angle - 0x40) & 0xFF;
             if (rotated > 0x80) {
@@ -1636,13 +1658,13 @@ void apply_rom_walk_collision(
         RomHorizontalHit side =
             rom_bg_coll_chk2(
                 collision,
-                center_x - kSlopeProbeRadius,
+                center_x - radius_x,
                 probe_rom_y,
                 0x10);
         if (!side.hit) {
             side = rom_bg_coll_chk1(
                 collision,
-                center_x + kSlopeProbeRadius,
+                center_x + radius_x,
                 probe_rom_y,
                 0x10);
         }
@@ -1680,28 +1702,31 @@ void apply_rom_walk_collision(
                 return;
             }
             player.x_raw += side.delta_x * kFixedOne;
-            player.velocity_x = 0;
-            player.ground_angle = side.angle;
+            if (
+                !((sector == 0x40 && side.angle == 0x40) ||
+                  (sector == 0xC0 && side.angle == 0xC0))) {
+                player.ground_angle = side.angle;
+            }
             return;
         }
 
         if (sector == 0xC0) {
             const RomCollisionHit floor =
-                choose_bg_coll_chk4_pair(collision, center_x, probe_rom_y, 0x10);
+                choose_bg_coll_chk4_pair(collision, center_x, probe_rom_y, 0x10, radius_x);
             if (floor.hit && floor.delta_y != 0) {
                 player.y_raw -= floor.delta_y * kFixedOne;
                 player.ground_angle = floor.angle;
-                player.velocity_y = 0;
             }
         } else {
             const RomCollisionHit ceiling =
-                choose_bg_coll_chk3_pair(collision, center_x, probe_rom_y, 0x10);
+                choose_bg_coll_chk3_pair(collision, center_x, probe_rom_y, 0x10, radius_x);
             if (ceiling.hit && ceiling.delta_y != 0) {
                 player.y_raw -= ceiling.delta_y * kFixedOne;
-                if (ceiling.angle != -0x80) {
+                if ((ceiling.angle & 0xFF) != 0x80) {
                     player.ground_angle = ceiling.angle;
                 } else {
-                    player.velocity_y = 0;
+                    player.ground_speed = 0;
+                    player.walking_active = false;
                 }
             }
         }
@@ -1714,12 +1739,15 @@ void apply_rom_walk_collision(
                 const int center_x = player.x_raw / kFixedOne;
                 const int center_y = player.y_raw / kFixedOne;
                 const int rom_center_y = view_y_to_rom_y(center_y);
+                const int radius_x = player.body_half_width;
+                const int radius_y = player.body_half_height;
                 const RomHorizontalHit side =
                     choose_bg_coll_chk2_pair(
                         collision,
-                        center_x - kSlopeProbeRadius,
+                        center_x - radius_x,
                         rom_center_y,
-                        scan_x_length);
+                        scan_x_length,
+                        radius_y);
                 if (side.hit && side.delta_x != 0) {
                     player.x_raw += side.delta_x * kFixedOne;
                     player.ground_speed = 0;
@@ -1730,12 +1758,15 @@ void apply_rom_walk_collision(
                 const int center_x = player.x_raw / kFixedOne;
                 const int center_y = player.y_raw / kFixedOne;
                 const int rom_center_y = view_y_to_rom_y(center_y);
+                const int radius_x = player.body_half_width;
+                const int radius_y = player.body_half_height;
                 const RomHorizontalHit side =
                     choose_bg_coll_chk1_pair(
                         collision,
-                        center_x + kSlopeProbeRadius,
+                        center_x + radius_x,
                         rom_center_y,
-                        scan_x_length);
+                        scan_x_length,
+                        radius_y);
                 if (side.hit && side.delta_x != 0) {
                     player.x_raw += side.delta_x * kFixedOne;
                     player.ground_speed = 0;
@@ -1749,14 +1780,16 @@ void apply_rom_walk_collision(
         const int center_x = player.x_raw / kFixedOne;
         const int center_y = player.y_raw / kFixedOne;
         const int rom_center_y = view_y_to_rom_y(center_y);
-        int side_offset = kSlopeProbeRadius;
+        const int radius_x = player.body_half_width;
+        const int radius_y = player.body_half_height;
+        int side_offset = radius_x;
         if (sector == 0x00) {
             if ((player.ground_angle & 0xFF) > 0x80) {
                 side_offset = -side_offset;
             }
             const RomHorizontalHit side =
                 choose_bg_coll_chk1_pair(
-                    collision, center_x + side_offset, rom_center_y, scan_x_length);
+                    collision, center_x + side_offset, rom_center_y, scan_x_length, radius_y);
             if (side.hit && side.delta_x != 0) {
                 player.x_raw += side.delta_x * kFixedOne;
                 player.velocity_x = 0;
@@ -1774,7 +1807,7 @@ void apply_rom_walk_collision(
             }
             const RomHorizontalHit side =
                 choose_bg_coll_chk2_pair(
-                    collision, center_x + side_offset, rom_center_y, scan_x_length);
+                    collision, center_x + side_offset, rom_center_y, scan_x_length, radius_y);
             if (side.hit && side.delta_x != 0) {
                 player.x_raw += side.delta_x * kFixedOne;
                 player.velocity_x = 0;
@@ -1791,12 +1824,15 @@ bool update_ground_contact(Player& player, const CollisionMask& collision, bool 
     const int center_x = player.x_raw / kFixedOne;
     const int center_y = player.y_raw / kFixedOne;
     const int rom_center_y = view_y_to_rom_y(center_y);
-    const int rom_floor_probe_y = rom_center_y - static_cast<int>(kPlayerHalfHeight);
+    const int radius_x = player.body_half_width;
+    const int radius_y = player.body_half_height;
+    const int rom_floor_probe_y = rom_center_y - radius_y;
     RomCollisionHit floor_hit =
-        choose_bg_coll_chk4_pair(collision, center_x, rom_floor_probe_y, kRomGroundScanLength);
+        choose_bg_coll_chk4_pair(
+            collision, center_x, rom_floor_probe_y, kRomGroundScanLength, radius_x);
     if (!floor_hit.hit && retain_ground) {
         floor_hit = choose_bg_coll_chk4_retain_pair(
-            collision, center_x, rom_floor_probe_y, kRomGroundScanLength);
+            collision, center_x, rom_floor_probe_y, kRomGroundScanLength, -1, radius_x);
     }
     if (!floor_hit.hit && !retain_ground && player.velocity_y >= kGroundMaxSpeed) {
         floor_hit = rom_bg_coll_chk4_window(
@@ -1831,14 +1867,16 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
     const int center_x = player.x_raw / kFixedOne;
     const int center_y = player.y_raw / kFixedOne;
     const int rom_center_y = view_y_to_rom_y(center_y);
+    const int radius_x = player.body_half_width;
+    const int radius_y = player.body_half_height;
     constexpr int kRomNoGroundScanLength = 8;
 
     if (sector > 0x40 && sector <= 0x80) {
-        const int x = center_x + kSlopeProbeRadius + 8;
+        const int x = center_x + radius_x + 8;
         const RomHorizontalHit top = rom_bg_coll_chk1(
-            collision, x, rom_center_y + static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y + radius_y, 0x10);
         const RomHorizontalHit bottom = rom_bg_coll_chk1(
-            collision, x, rom_center_y - static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y - radius_y, 0x10);
         RomHorizontalHit selected;
         if (!top.hit) {
             selected = bottom;
@@ -1857,15 +1895,15 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
 
     if (sector > 0x80 && sector <= 0xC0) {
         const int rom_ceiling_probe_y =
-            rom_center_y + static_cast<int>(kPlayerHalfHeight) + 8;
+            rom_center_y + radius_y + 8;
         const RomCollisionHit right = rom_bg_coll_chk3(
             collision,
-            center_x + kSlopeProbeRadius,
+            center_x + radius_x,
             rom_ceiling_probe_y,
             kRomNoGroundScanLength);
         const RomCollisionHit left = rom_bg_coll_chk3(
             collision,
-            center_x - kSlopeProbeRadius,
+            center_x - radius_x,
             rom_ceiling_probe_y,
             kRomNoGroundScanLength);
         RomCollisionHit selected;
@@ -1885,11 +1923,11 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
     }
 
     if (sector > 0xC0) {
-        const int x = center_x - kSlopeProbeRadius - 8;
+        const int x = center_x - radius_x - 8;
         const RomHorizontalHit top = rom_bg_coll_chk2(
-            collision, x, rom_center_y + static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y + radius_y, 0x10);
         const RomHorizontalHit bottom = rom_bg_coll_chk2(
-            collision, x, rom_center_y - static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y - radius_y, 0x10);
         RomHorizontalHit selected;
         if (!top.hit) {
             selected = bottom;
@@ -1907,15 +1945,15 @@ bool rom_check_no_ground(Player& player, const CollisionMask& collision) {
     }
 
     const int rom_floor_probe_y =
-        rom_center_y - static_cast<int>(kPlayerHalfHeight) - 8;
+        rom_center_y - radius_y - 8;
     const RomCollisionHit right = rom_bg_coll_chk4(
         collision,
-        center_x + kSlopeProbeRadius,
+        center_x + radius_x,
         rom_floor_probe_y,
         kRomNoGroundScanLength);
     const RomCollisionHit left = rom_bg_coll_chk4(
         collision,
-        center_x - kSlopeProbeRadius,
+        center_x - radius_x,
         rom_floor_probe_y,
         kRomNoGroundScanLength);
 
@@ -1957,52 +1995,54 @@ bool rom_has_ground_support(const Player& player, const CollisionMask& collision
     const int center_x = player.x_raw / kFixedOne;
     const int center_y = player.y_raw / kFixedOne;
     const int rom_center_y = view_y_to_rom_y(center_y);
+    const int radius_x = player.body_half_width;
+    const int radius_y = player.body_half_height;
     constexpr int kRomNoGroundScanLength = 8;
 
     if (sector > 0x40 && sector <= 0x80) {
-        const int x = center_x + kSlopeProbeRadius + 8;
+        const int x = center_x + radius_x + 8;
         const RomHorizontalHit top = rom_bg_coll_chk1(
-            collision, x, rom_center_y + static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y + radius_y, 0x10);
         const RomHorizontalHit bottom = rom_bg_coll_chk1(
-            collision, x, rom_center_y - static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y - radius_y, 0x10);
         return (top.hit && top.delta_x != 0) || (bottom.hit && bottom.delta_x != 0);
     }
 
     if (sector > 0x80 && sector <= 0xC0) {
         const int rom_ceiling_probe_y =
-            rom_center_y + static_cast<int>(kPlayerHalfHeight) + 8;
+            rom_center_y + radius_y + 8;
         const RomCollisionHit right = rom_bg_coll_chk3(
             collision,
-            center_x + kSlopeProbeRadius,
+            center_x + radius_x,
             rom_ceiling_probe_y,
             kRomNoGroundScanLength);
         const RomCollisionHit left = rom_bg_coll_chk3(
             collision,
-            center_x - kSlopeProbeRadius,
+            center_x - radius_x,
             rom_ceiling_probe_y,
             kRomNoGroundScanLength);
         return (right.hit && right.delta_y != 0) || (left.hit && left.delta_y != 0);
     }
 
     if (sector > 0xC0) {
-        const int x = center_x - kSlopeProbeRadius - 8;
+        const int x = center_x - radius_x - 8;
         const RomHorizontalHit top = rom_bg_coll_chk2(
-            collision, x, rom_center_y + static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y + radius_y, 0x10);
         const RomHorizontalHit bottom = rom_bg_coll_chk2(
-            collision, x, rom_center_y - static_cast<int>(kPlayerHalfHeight), 0x10);
+            collision, x, rom_center_y - radius_y, 0x10);
         return (top.hit && top.delta_x != 0) || (bottom.hit && bottom.delta_x != 0);
     }
 
     const int rom_floor_probe_y =
-        rom_center_y - static_cast<int>(kPlayerHalfHeight) - 8;
+        rom_center_y - radius_y - 8;
     const RomCollisionHit right = rom_bg_coll_chk4(
         collision,
-        center_x + kSlopeProbeRadius,
+        center_x + radius_x,
         rom_floor_probe_y,
         kRomNoGroundScanLength);
     const RomCollisionHit left = rom_bg_coll_chk4(
         collision,
-        center_x - kSlopeProbeRadius,
+        center_x - radius_x,
         rom_floor_probe_y,
         kRomNoGroundScanLength);
     return (right.hit && right.delta_y != 0) || (left.hit && left.delta_y != 0);
