@@ -211,6 +211,12 @@ struct Player {
     int debug_walk_delta_x = 0;
     int debug_walk_delta_y = 0;
     int debug_walk_angle = 0;
+    int debug_floor_probe_center_x = 0;
+    int debug_floor_probe_rom_y = 0;
+    int debug_floor_applied_delta_y = 0;
+    int debug_floor_previous_angle = 0;
+    int debug_floor_velocity_x = 0;
+    int debug_floor_velocity_y = 0;
     int debug_floor_hit_delta_y = 0;
     int debug_floor_hit_response = 0;
     int debug_floor_hit_local_x = 0;
@@ -1535,6 +1541,8 @@ bool apply_rom_vertical_ground_pair(
     const int radius_y = player.body_half_height;
     const int rom_floor_probe_y = rom_center_y - radius_y;
     const int rom_ceiling_probe_y = rom_center_y + radius_y;
+    player.debug_floor_probe_center_x = center_x;
+    player.debug_floor_probe_rom_y = rom_floor_probe_y;
 
     RomCollisionHit floor_hit =
         retain_ground ?
@@ -1564,6 +1572,9 @@ bool apply_rom_vertical_ground_pair(
     }
 
     const int previous_ground_angle = player.ground_angle & 0xFF;
+    player.debug_floor_previous_angle = previous_ground_angle;
+    player.debug_floor_velocity_x = player.velocity_x;
+    player.debug_floor_velocity_y = player.velocity_y;
     player.debug_floor_hit_delta_y = floor_hit.delta_y;
     player.debug_floor_hit_response = floor_hit.response;
     player.debug_floor_hit_local_x = floor_hit.local_x;
@@ -1584,9 +1595,11 @@ bool apply_rom_vertical_ground_pair(
             floor_hit.angle == 0 &&
                 previous_ground_angle > 0 &&
                 previous_ground_angle < 0x20 ? 0 :
+            floor_hit.angle == 0 &&
+                previous_ground_angle >= 0xC0 ? 0 :
             floor_hit.angle > 0 && floor_hit.angle < 0x10 ? 1 :
             floor_hit.angle >= 0x10 && floor_hit.angle < 0x40 ? 4 :
-            (floor_hit.angle & 0xFF) >= 0xC0 && floor_hit.response <= 3 ? 1 : 2;
+            (floor_hit.angle & 0xFF) >= 0xC0 ? 1 : 2;
         ground_delta_y = std::clamp(ground_delta_y + uphill_bias, -1, 1);
         if (
             floor_hit.angle > 0 &&
@@ -1619,11 +1632,27 @@ bool apply_rom_vertical_ground_pair(
         ground_delta_y = 1;
     }
     if (
+        ground_delta_y == 0 &&
+        floor_hit.delta_y == 0 &&
+        player.velocity_y > 0 &&
+        floor_hit.angle > 0 &&
+        floor_hit.angle < 0x10) {
+        ground_delta_y = floor_hit.response >= 8 ? -1 : 1;
+    }
+    if (
         ground_delta_y < 0 &&
         player.velocity_y == 0 &&
         previous_ground_angle == 0 &&
         floor_hit.angle == 0) {
         ground_delta_y = 0;
+    }
+    if (
+        ground_delta_y < 0 &&
+        floor_hit.delta_y < 0 &&
+        player.velocity_y >= 0 &&
+        floor_hit.angle > 0 &&
+        floor_hit.angle < 0x10) {
+        ground_delta_y = floor_hit.delta_y <= -2 ? -1 : 0;
     }
     if (
         player.velocity_y == 0 &&
@@ -1695,9 +1724,11 @@ bool apply_rom_vertical_ground_pair(
         previous_ground_angle > 0 &&
         previous_ground_angle < 0x20 &&
         floor_hit.angle == 0 &&
+        player.velocity_y < 0 &&
         player.velocity_x < 0) {
         player.y_raw -= kFixedOne;
     }
+    player.debug_floor_applied_delta_y = ground_delta_y;
     player.y_raw -= ground_delta_y * kFixedOne;
     player.air_time = 0.0F;
     player.ground_angle = floor_hit.angle;
@@ -2388,6 +2419,12 @@ void update_player(Player& player, const CollisionMask& collision,
     player.debug_no_ground_delta_y = 0;
     player.debug_no_ground_angle = player.ground_angle & 0xFF;
     player.debug_no_ground_hit = false;
+    player.debug_floor_probe_center_x = 0;
+    player.debug_floor_probe_rom_y = 0;
+    player.debug_floor_applied_delta_y = 0;
+    player.debug_floor_previous_angle = player.ground_angle & 0xFF;
+    player.debug_floor_velocity_x = player.velocity_x;
+    player.debug_floor_velocity_y = player.velocity_y;
 
     player.movement_input = movement;
     player.jump_held = jump_held;
@@ -2808,6 +2845,12 @@ void write_trace_state(
         << player.debug_walk_delta_x << ','
         << player.debug_walk_delta_y << ','
         << "0x" << std::hex << (player.debug_walk_angle & 0xFF) << std::dec << ','
+        << player.debug_floor_probe_center_x << ','
+        << player.debug_floor_probe_rom_y << ','
+        << player.debug_floor_applied_delta_y << ','
+        << "0x" << std::hex << (player.debug_floor_previous_angle & 0xFF) << std::dec << ','
+        << player.debug_floor_velocity_x << ','
+        << player.debug_floor_velocity_y << ','
         << player.debug_floor_hit_delta_y << ','
         << player.debug_floor_hit_response << ','
         << player.debug_floor_hit_local_x << ','
@@ -2905,6 +2948,8 @@ int replay_trace(
         << "row,frame,buttons_current,x_raw_16_8,y_raw_16_8,"
            "ground_speed_s8_8,x_velocity_s8_8,y_velocity_s8_8,"
            "surface_angle,grounded,walk_delta_x,walk_delta_y,walk_angle,"
+           "floor_probe_center_x,floor_probe_rom_y,floor_applied_delta_y,"
+           "floor_previous_angle,floor_velocity_x,floor_velocity_y,"
            "floor_hit_delta_y,floor_hit_response,floor_hit_local_x,"
            "floor_hit_local_y,floor_hit_collision_type,"
            "no_ground_sector,no_ground_hit,no_ground_delta_x,no_ground_delta_y,"
@@ -3001,6 +3046,8 @@ int teacher_trace(
            "expected_surface_angle,actual_surface_angle,"
            "expected_grounded,actual_grounded,"
            "walk_delta_x,walk_delta_y,walk_angle,"
+           "floor_probe_center_x,floor_probe_rom_y,floor_applied_delta_y,"
+           "floor_previous_angle,floor_velocity_x,floor_velocity_y,"
            "floor_hit_delta_y,floor_hit_response,floor_hit_local_x,"
            "floor_hit_local_y,floor_hit_collision_type,"
            "no_ground_sector,no_ground_hit,no_ground_delta_x,no_ground_delta_y,"
@@ -3093,6 +3140,12 @@ int teacher_trace(
             << player.debug_walk_delta_x << ','
             << player.debug_walk_delta_y << ','
             << "0x" << std::hex << (player.debug_walk_angle & 0xFF) << std::dec << ','
+            << player.debug_floor_probe_center_x << ','
+            << player.debug_floor_probe_rom_y << ','
+            << player.debug_floor_applied_delta_y << ','
+            << "0x" << std::hex << (player.debug_floor_previous_angle & 0xFF) << std::dec << ','
+            << player.debug_floor_velocity_x << ','
+            << player.debug_floor_velocity_y << ','
             << player.debug_floor_hit_delta_y << ','
             << player.debug_floor_hit_response << ','
             << player.debug_floor_hit_local_x << ','

@@ -83,7 +83,8 @@ def main() -> int:
     print()
     print(
         "row,frame,angle,movement,vy,floor_delta,floor_response,"
-        "floor_local_x,type,current_delta,desired_delta,dy_pixels"
+        "floor_local_x,type,probe_x,probe_y,current_delta,desired_delta,"
+        "dy_pixels"
     )
 
     rule_counter: Counter[tuple[str, ...]] = Counter()
@@ -102,6 +103,8 @@ def main() -> int:
             f"{row['floor_hit_response']},"
             f"{row['floor_hit_local_x']},"
             f"{row['floor_hit_collision_type']},"
+            f"{row.get('floor_probe_center_x', '')},"
+            f"{row.get('floor_probe_rom_y', '')},"
             f"{current},{desired},{dy_pixels}"
         )
         key = (
@@ -126,10 +129,13 @@ def main() -> int:
 
     print()
     print("next action:")
-    print(
-        "- Port/check BGCollChk4 until current_delta equals desired_delta for "
-        "these rows without special-casing level coordinates."
-    )
+    if mismatches:
+        print(
+            "- Port/check BGCollChk4 until current_delta equals desired_delta for "
+            "these rows without special-casing level coordinates."
+        )
+    else:
+        print("- Floor Y correction is clean for this teacher-forced trace.")
     return 0
 
 

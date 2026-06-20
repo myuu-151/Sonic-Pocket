@@ -118,9 +118,29 @@ That means the active bug class is not broad movement, animation, camera, or
 grounded-state logic. The active bug class is floor Y correction around shallow
 slope/flat transitions, especially angles `0xF6`, `0x0A`, and `0x00`.
 
-The repair target is therefore:
+Initial repair target:
 
 1. Port/check `sub_39BC22` as a small ROM-coordinate function.
 2. Port/check the `BGCollChk4` table scan semantics it depends on.
 3. Use `native-teacher-trace.csv` to clear the 16 `dy_raw` mismatches before
    touching live viewer feel again.
+
+## 2026-06-20 floor-correction update
+
+The teacher-forced floor Y class has been cleared:
+
+- `dy_raw` mismatches: 16 -> 0.
+- `surface_angle` mismatches: still 0.
+- `grounded` mismatches: still 0.
+- Normal replay first mismatch moved from row 527/frame 2792 to row
+  755/frame 3020.
+
+The remaining teacher-forced mismatch class is isolated movement integration:
+
+- `dx_raw`: 1 sample.
+- `ground_speed`: 1 sample.
+- `x_velocity`: 1 sample.
+
+Next target is no longer floor Y correction. It is the frame-3020 stop/start
+movement case where the ROM still has `ground_speed=128` and `x_velocity=128`,
+while native has already snapped both to zero.

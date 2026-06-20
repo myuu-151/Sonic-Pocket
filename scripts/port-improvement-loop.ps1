@@ -107,8 +107,8 @@ Append-Section $Builder "Normal replay compare" $Compare.Text
 [void]$Builder.AppendLine()
 [void]$Builder.AppendLine("## Next target")
 [void]$Builder.AppendLine()
-[void]$Builder.AppendLine("Current evidence says the next patch should target `sub_39BC22` / `BGCollChk4` floor Y correction only.")
-[void]$Builder.AppendLine("Do not touch camera, sprites, animation, or broad movement until `dy_raw` teacher mismatches drop.")
+[void]$Builder.AppendLine('Use the `repair priority` section above as the active target.')
+[void]$Builder.AppendLine("If `dy_raw` is nonzero, stay on floor correction. If `dy_raw` is clean, move to the next nonzero teacher-forced field before trusting normal replay drift.")
 
 Set-Content -LiteralPath $ReportPath -Value $Builder.ToString()
 Write-Host "Wrote $ReportPath"

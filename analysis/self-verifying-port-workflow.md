@@ -32,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File scripts\port-improvement-loop.ps1 -Stri
 A code change is allowed to stay only if it improves the measured target without
 regressing earlier checks.
 
-For the current collision work, that means:
+For collision work, that means:
 
 - `dy_raw` teacher-forced mismatches must go down.
 - `surface_angle` mismatches must stay at zero.
@@ -43,15 +43,18 @@ If a patch makes screenshots look better but worsens these metrics, reject it.
 
 ## Current active target
 
-Current evidence points at floor Y correction only:
+Current evidence is always whatever `scripts\port-improvement-loop.ps1` reports
+in `out\port-improvement-report.md`.
+
+Completed target:
 
 - `sub_39BC22`
 - `BGCollChk4`
 - the collision-table scan semantics used by those routines
 
-Do not tune camera, animation, sprite draw offsets, or broad movement while this
-target is active. Those are downstream symptoms until the collision routine is
-ported closely enough.
+The floor-Y teacher-forced class is now clean. The next target is the first
+remaining movement-integration mismatch; do not tune camera, animation, or
+sprite draw offsets for that class.
 
 ## Team workflow
 
