@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay BizHawk player traces against the native movement model.
+"""Replay or compare BizHawk player traces against native movement output.
 
 This is intentionally small and strict: it exists to stop tuning by feel.
 The first mismatch is the next bug to explain with either trace evidence or
@@ -117,10 +117,34 @@ def load_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(stream))
 
 
+def resolve_trace_path(path: Path) -> Path:
+    """Use the timestamped BizHawk trace when the default path is requested."""
+
+    if path.name != "player-runtime-trace.csv":
+        return path
+
+    marker = path.with_name("player-runtime-trace-latest.txt")
+    if marker.exists():
+        candidate = Path(marker.read_text(encoding="utf-8").strip())
+        if candidate.exists():
+            return candidate
+
+    timestamped = sorted(
+        path.parent.glob("player-runtime-trace-*.csv"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    if timestamped:
+        return timestamped[0]
+
+    return path
+
+
 def row_value(row: dict[str, str], key: str) -> int:
-    if key == "buttons_current" or key == "state":
-        return int(row[key], 16)
-    return int(row[key])
+    raw = row[key].strip()
+    if raw.lower().startswith("0x"):
+        return int(raw, 16)
+    return int(float(raw))
 
 
 def compare(rows: list[dict[str, str]], cadence: int, phase: int) -> tuple[int, str]:
@@ -162,6 +186,56 @@ def compare(rows: list[dict[str, str]], cadence: int, phase: int) -> tuple[int, 
     return len(rows), f"matched {len(rows)} rows"
 
 
+def compare_native_trace(
+    rom_rows: list[dict[str, str]],
+    native_rows: list[dict[str, str]],
+) -> tuple[int, str]:
+    keys = [
+        "x_raw_16_8",
+        "y_raw_16_8",
+        "ground_speed_s8_8",
+        "x_velocity_s8_8",
+        "y_velocity_s8_8",
+        "surface_angle",
+    ]
+    limit = min(len(rom_rows), len(native_rows))
+    for index in range(limit):
+        rom_row = rom_rows[index]
+        native_row = native_rows[index]
+        for key in keys:
+            if key not in rom_row or key not in native_row:
+                continue
+            expected = row_value(rom_row, key)
+            actual = row_value(native_row, key)
+            if expected != actual:
+                frame = rom_row.get("frame", str(index))
+                return index, (
+                    f"frame {frame} row {index}: {key} expected "
+                    f"{expected}, got {actual}; "
+                    f"rom={{"
+                    f"x={rom_row.get('x_raw_16_8')}, "
+                    f"y={rom_row.get('y_raw_16_8')}, "
+                    f"g={rom_row.get('ground_speed_s8_8')}, "
+                    f"vx={rom_row.get('x_velocity_s8_8')}, "
+                    f"vy={rom_row.get('y_velocity_s8_8')}, "
+                    f"angle={rom_row.get('surface_angle')}"
+                    f"}} native={{"
+                    f"x={native_row.get('x_raw_16_8')}, "
+                    f"y={native_row.get('y_raw_16_8')}, "
+                    f"g={native_row.get('ground_speed_s8_8')}, "
+                    f"vx={native_row.get('x_velocity_s8_8')}, "
+                    f"vy={native_row.get('y_velocity_s8_8')}, "
+                    f"angle={native_row.get('surface_angle')}"
+                    f"}}"
+                )
+    if len(rom_rows) != len(native_rows):
+        return limit, (
+            f"matched {limit} shared rows, length differs: "
+            f"rom={len(rom_rows)} native={len(native_rows)}"
+        )
+    return limit, f"matched {limit} rows"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -170,9 +244,23 @@ def main() -> int:
         nargs="?",
         default=Path("out/player-runtime-trace.csv"),
     )
+    parser.add_argument(
+        "native_trace",
+        type=Path,
+        nargs="?",
+        help="Optional native trace CSV produced by sonic-pocket-viewer --replay-trace.",
+    )
     args = parser.parse_args()
 
+    args.trace = resolve_trace_path(args.trace)
+    print(f"ROM trace: {args.trace}")
     rows = load_rows(args.trace)
+    if args.native_trace is not None:
+        native_rows = load_rows(args.native_trace)
+        matched, message = compare_native_trace(rows, native_rows)
+        print(f"{matched:5d} rows: {message}")
+        return 0 if matched == min(len(rows), len(native_rows)) else 1
+
     for cadence in (1, 2, 3, 4):
         for phase in range(cadence):
             matched, message = compare(rows, cadence, phase)

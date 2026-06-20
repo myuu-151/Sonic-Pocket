@@ -44,8 +44,9 @@ local function read_u32(address)
 end
 
 local output_candidates = {}
+local trace_filename = "player-runtime-trace-" .. os.date("%Y%m%d-%H%M%S") .. ".csv"
 if repo_root ~= "." then
-    table.insert(output_candidates, repo_root .. "\\out\\player-runtime-trace.csv")
+    table.insert(output_candidates, repo_root .. "\\out\\" .. trace_filename)
 end
 
 -- BizHawk's Lua Console may expose only the script filename through
@@ -55,10 +56,10 @@ local user_profile = os.getenv("USERPROFILE")
 if user_profile then
     table.insert(
         output_candidates,
-        user_profile .. "\\Documents\\SonicPocket\\out\\player-runtime-trace.csv"
+        user_profile .. "\\Documents\\SonicPocket\\out\\" .. trace_filename
     )
 end
-table.insert(output_candidates, ".\\player-runtime-trace.csv")
+table.insert(output_candidates, ".\\" .. trace_filename)
 
 local trace = nil
 local output_path = nil
@@ -77,6 +78,14 @@ if not trace then
     error("Could not create the trace CSV:\n" .. table.concat(open_errors, "\n"))
 end
 
+local output_dir = output_path:match("^(.*[/\\])[^/\\]+$") or ".\\"
+local latest_marker = output_dir .. "player-runtime-trace-latest.txt"
+local marker = io.open(latest_marker, "w")
+if marker then
+    marker:write(output_path, "\n")
+    marker:close()
+end
+
 trace:write(table.concat({
     "frame",
     "state",
@@ -85,15 +94,24 @@ trace:write(table.concat({
     "task_flags",
     "movement_flags",
     "surface_angle",
+    "collision_plane",
     "x_raw_16_8",
     "x_integer",
     "y_raw_16_8",
     "y_integer",
+    "x_word_for_collision",
+    "y_word_for_collision",
     "ground_speed_s8_8",
     "x_velocity_s8_8",
     "y_velocity_s8_8",
     "collision_radius_x",
     "collision_radius_y",
+    "previous_collision_x_word",
+    "previous_collision_y_word",
+    "collision_step_x_pixels",
+    "collision_step_y_pixels",
+    "air_flags_48",
+    "air_flags_49",
     "plane2_camera_x",
     "plane2_camera_y",
     "player_screen_x_current",
@@ -123,13 +141,22 @@ while true do
     local task_flags = read_u8(PLAYER_TASK + 0x0B)
     local angle = read_u8(PLAYER_TASK + 0x10)
     local x_raw = read_u24(PLAYER_TASK + 0x11)
+    local x_word_for_collision = read_s16(PLAYER_TASK + 0x12)
     local movement_flags = read_u8(PLAYER_TASK + 0x14)
     local y_raw = read_u24(PLAYER_TASK + 0x15)
+    local y_word_for_collision = read_s16(PLAYER_TASK + 0x16)
     local ground_speed = read_s16(PLAYER_TASK + 0x18)
     local x_velocity = read_s16(PLAYER_TASK + 0x1A)
     local y_velocity = read_s16(PLAYER_TASK + 0x1C)
+    local collision_plane = read_u8(PLAYER_TASK + 0x29)
     local radius_x = read_u8(PLAYER_TASK + 0x36)
     local radius_y = read_u8(PLAYER_TASK + 0x37)
+    local previous_collision_x_word = read_s16(PLAYER_TASK + 0x38)
+    local previous_collision_y_word = read_s16(PLAYER_TASK + 0x3A)
+    local collision_step_x_pixels = math.abs(x_word_for_collision - previous_collision_x_word) + 1
+    local collision_step_y_pixels = math.abs(y_word_for_collision - previous_collision_y_word) + 1
+    local air_flags_48 = read_u8(PLAYER_TASK + 0x48)
+    local air_flags_49 = read_u8(PLAYER_TASK + 0x49)
     local camera_x = read_s16(0x506C)
     local camera_y = read_s16(0x506E)
     local camera_follow_x = read_s16(0x67A4)
@@ -142,7 +169,7 @@ while true do
     local camera_max_y = read_s16(0x5080)
 
     trace:write(string.format(
-        "%d,0x%08X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+        "%d,0x%08X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,0x%02X,0x%02X,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
         frame,
         state,
         buttons_current,
@@ -150,15 +177,24 @@ while true do
         task_flags,
         movement_flags,
         angle,
+        collision_plane,
         x_raw,
         x_raw >> 8,
         y_raw,
         y_raw >> 8,
+        x_word_for_collision,
+        y_word_for_collision,
         ground_speed,
         x_velocity,
         y_velocity,
         radius_x,
         radius_y,
+        previous_collision_x_word,
+        previous_collision_y_word,
+        collision_step_x_pixels,
+        collision_step_y_pixels,
+        air_flags_48,
+        air_flags_49,
         camera_x,
         camera_y,
         camera_follow_x,
