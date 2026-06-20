@@ -2753,6 +2753,82 @@ int trace_field(
     return parse_trace_int(row[index]);
 }
 
+void load_player_from_trace_row(
+    Player& player,
+    const std::vector<std::string>& header,
+    const std::vector<std::string>& row) {
+    player = Player{};
+    player.x_raw = trace_field(header, row, "x_raw_16_8");
+    player.y_raw =
+        ((kStageHeight - 1) * kFixedOne) -
+        trace_field(header, row, "y_raw_16_8");
+    player.ground_speed = trace_field(header, row, "ground_speed_s8_8");
+    player.velocity_x = trace_field(header, row, "x_velocity_s8_8");
+    player.velocity_y = -trace_field(header, row, "y_velocity_s8_8");
+    player.previous_x_raw =
+        trace_field(header, row, "previous_collision_x_word",
+                    player.x_raw / kFixedOne) *
+        kFixedOne;
+    player.previous_y_raw =
+        ((kStageHeight - 1) -
+         trace_field(header, row, "previous_collision_y_word",
+                     ((kStageHeight - 1) * kFixedOne - player.y_raw) /
+                         kFixedOne)) *
+        kFixedOne;
+    player.body_half_width =
+        trace_field(header, row, "collision_radius_x", player.body_half_width);
+    player.body_half_height =
+        trace_field(header, row, "collision_radius_y", player.body_half_height);
+    player.collision_plane =
+        trace_field(header, row, "collision_plane", player.collision_plane);
+    player.ground_angle = trace_field(header, row, "surface_angle") & 0xFF;
+    player.grounded = trace_field(header, row, "state") != 0x0039AAF7;
+    player.facing_left =
+        (trace_field(header, row, "movement_flags") & 0x80) != 0;
+    player.walking_active = player.grounded && player.ground_speed != 0;
+}
+
+void write_trace_state(
+    std::ofstream& output,
+    std::size_t row_index,
+    int frame,
+    int buttons,
+    const Player& player) {
+    output
+        << row_index << ','
+        << frame << ','
+        << "0x" << std::hex << buttons << std::dec << ','
+        << player.x_raw << ','
+        << (((kStageHeight - 1) * kFixedOne) - player.y_raw) << ','
+        << player.ground_speed << ','
+        << player.velocity_x << ','
+        << -player.velocity_y << ','
+        << "0x" << std::hex << (player.ground_angle & 0xFF) << std::dec << ','
+        << (player.grounded ? 1 : 0) << ','
+        << player.debug_walk_delta_x << ','
+        << player.debug_walk_delta_y << ','
+        << "0x" << std::hex << (player.debug_walk_angle & 0xFF) << std::dec << ','
+        << player.debug_floor_hit_delta_y << ','
+        << player.debug_floor_hit_response << ','
+        << player.debug_floor_hit_local_x << ','
+        << player.debug_floor_hit_local_y << ','
+        << player.debug_floor_hit_collision_type << ','
+        << "0x" << std::hex << (player.debug_no_ground_sector & 0xFF) << std::dec << ','
+        << (player.debug_no_ground_hit ? 1 : 0) << ','
+        << player.debug_no_ground_delta_x << ','
+        << player.debug_no_ground_delta_y << ','
+        << "0x" << std::hex << (player.debug_no_ground_angle & 0xFF) << std::dec
+        << ','
+        << (player.debug_no_ground_probe_a_hit ? 1 : 0) << ','
+        << player.debug_no_ground_probe_a_delta << ','
+        << "0x" << std::hex << (player.debug_no_ground_probe_a_angle & 0xFF) << std::dec
+        << ','
+        << (player.debug_no_ground_probe_b_hit ? 1 : 0) << ','
+        << player.debug_no_ground_probe_b_delta << ','
+        << "0x" << std::hex << (player.debug_no_ground_probe_b_angle & 0xFF) << std::dec
+        << '\n';
+}
+
 std::filesystem::path resolve_replay_trace_path(std::filesystem::path trace_path) {
     if (trace_path.filename() != "player-runtime-trace.csv") {
         return trace_path;
@@ -2848,39 +2924,7 @@ int replay_trace(
         const auto& row = rows[row_index];
         const int frame = trace_field(header, row, "frame");
         const int buttons = trace_field(header, row, "buttons_current");
-        output
-            << row_index << ','
-            << frame << ','
-            << "0x" << std::hex << buttons << std::dec << ','
-            << player.x_raw << ','
-            << (((kStageHeight - 1) * kFixedOne) - player.y_raw) << ','
-            << player.ground_speed << ','
-            << player.velocity_x << ','
-            << -player.velocity_y << ','
-            << "0x" << std::hex << (player.ground_angle & 0xFF) << std::dec << ','
-            << (player.grounded ? 1 : 0) << ','
-            << player.debug_walk_delta_x << ','
-            << player.debug_walk_delta_y << ','
-            << "0x" << std::hex << (player.debug_walk_angle & 0xFF) << std::dec << ','
-            << player.debug_floor_hit_delta_y << ','
-            << player.debug_floor_hit_response << ','
-            << player.debug_floor_hit_local_x << ','
-            << player.debug_floor_hit_local_y << ','
-            << player.debug_floor_hit_collision_type << ','
-            << "0x" << std::hex << (player.debug_no_ground_sector & 0xFF) << std::dec << ','
-            << (player.debug_no_ground_hit ? 1 : 0) << ','
-            << player.debug_no_ground_delta_x << ','
-            << player.debug_no_ground_delta_y << ','
-            << "0x" << std::hex << (player.debug_no_ground_angle & 0xFF) << std::dec
-            << ','
-            << (player.debug_no_ground_probe_a_hit ? 1 : 0) << ','
-            << player.debug_no_ground_probe_a_delta << ','
-            << "0x" << std::hex << (player.debug_no_ground_probe_a_angle & 0xFF) << std::dec
-            << ','
-            << (player.debug_no_ground_probe_b_hit ? 1 : 0) << ','
-            << player.debug_no_ground_probe_b_delta << ','
-            << "0x" << std::hex << (player.debug_no_ground_probe_b_angle & 0xFF) << std::dec
-            << '\n';
+        write_trace_state(output, row_index, frame, buttons, player);
         if ((frame % kTraceLogicCadence) == 1) {
             const auto& logic_row =
                 row_index + 1 < rows.size() ? rows[row_index + 1] : row;
@@ -2912,6 +2956,171 @@ int replay_trace(
     return 0;
 }
 
+int teacher_trace(
+    const CollisionMask& collision,
+    const std::filesystem::path& trace_path,
+    const std::filesystem::path& output_path) {
+    const std::filesystem::path resolved_trace_path =
+        resolve_replay_trace_path(trace_path);
+    std::ifstream input(resolved_trace_path);
+    if (!input) {
+        std::cerr << "Unable to open teacher trace " << resolved_trace_path << '\n';
+        return 2;
+    }
+    std::ofstream output(output_path);
+    if (!output) {
+        std::cerr << "Unable to create teacher output " << output_path << '\n';
+        return 2;
+    }
+
+    std::string line;
+    if (!std::getline(input, line)) {
+        std::cerr << "Teacher trace is empty: " << trace_path << '\n';
+        return 2;
+    }
+    const std::vector<std::string> header = split_csv_line(line);
+
+    std::vector<std::vector<std::string>> rows;
+    while (std::getline(input, line)) {
+        if (!line.empty()) {
+            rows.push_back(split_csv_line(line));
+        }
+    }
+    if (rows.size() < 2) {
+        std::cerr << "Teacher trace needs at least two rows: " << trace_path << '\n';
+        return 2;
+    }
+
+    output
+        << "row,frame,buttons_current,movement,jump_pressed,"
+           "expected_x_raw_16_8,actual_x_raw_16_8,dx_raw,"
+           "expected_y_raw_16_8,actual_y_raw_16_8,dy_raw,"
+           "expected_ground_speed_s8_8,actual_ground_speed_s8_8,dground_speed,"
+           "expected_x_velocity_s8_8,actual_x_velocity_s8_8,dx_velocity,"
+           "expected_y_velocity_s8_8,actual_y_velocity_s8_8,dy_velocity,"
+           "expected_surface_angle,actual_surface_angle,"
+           "expected_grounded,actual_grounded,"
+           "walk_delta_x,walk_delta_y,walk_angle,"
+           "floor_hit_delta_y,floor_hit_response,floor_hit_local_x,"
+           "floor_hit_local_y,floor_hit_collision_type,"
+           "no_ground_sector,no_ground_hit,no_ground_delta_x,no_ground_delta_y,"
+           "no_ground_angle,no_ground_probe_a_hit,no_ground_probe_a_delta,"
+           "no_ground_probe_a_angle,no_ground_probe_b_hit,no_ground_probe_b_delta,"
+           "no_ground_probe_b_angle\n";
+
+    constexpr int kButtonLeft = 0x04;
+    constexpr int kButtonRight = 0x08;
+    constexpr int kButtonJump = 0x10;
+    constexpr int kButtonUp = 0x20;
+    constexpr int kButtonDown = 0x40;
+    constexpr int kTraceLogicCadence = 2;
+
+    std::size_t samples = 0;
+    for (std::size_t row_index = 0; row_index + 1 < rows.size(); ++row_index) {
+        const auto& row = rows[row_index];
+        const int frame = trace_field(header, row, "frame");
+        if ((frame % kTraceLogicCadence) != 1) {
+            continue;
+        }
+
+        const auto& next_row = rows[row_index + 1];
+        Player player;
+        load_player_from_trace_row(player, header, row);
+
+        const int buttons = trace_field(header, row, "buttons_current");
+        const int next_buttons = trace_field(header, next_row, "buttons_current");
+        const int pressed = trace_field(header, next_row, "buttons_pressed");
+        const int logic_buttons =
+            player.ground_speed == 0 ? (buttons & next_buttons) : next_buttons;
+        const int movement =
+            ((logic_buttons & kButtonRight) != 0) -
+            ((logic_buttons & kButtonLeft) != 0);
+        const bool jump_pressed = (pressed & kButtonJump) != 0;
+
+        update_player(
+            player,
+            collision,
+            movement,
+            jump_pressed,
+            (logic_buttons & kButtonJump) != 0,
+            (logic_buttons & kButtonUp) != 0,
+            (logic_buttons & kButtonDown) != 0);
+
+        const int expected_x = trace_field(header, next_row, "x_raw_16_8");
+        const int actual_x = player.x_raw;
+        const int expected_y = trace_field(header, next_row, "y_raw_16_8");
+        const int actual_y = ((kStageHeight - 1) * kFixedOne) - player.y_raw;
+        const int expected_ground_speed =
+            trace_field(header, next_row, "ground_speed_s8_8");
+        const int actual_ground_speed = player.ground_speed;
+        const int expected_velocity_x =
+            trace_field(header, next_row, "x_velocity_s8_8");
+        const int actual_velocity_x = player.velocity_x;
+        const int expected_velocity_y =
+            trace_field(header, next_row, "y_velocity_s8_8");
+        const int actual_velocity_y = -player.velocity_y;
+        const int expected_angle =
+            trace_field(header, next_row, "surface_angle") & 0xFF;
+        const int actual_angle = player.ground_angle & 0xFF;
+        const bool expected_grounded =
+            trace_field(header, next_row, "state") != 0x0039AAF7;
+
+        output
+            << row_index << ','
+            << frame << ','
+            << "0x" << std::hex << logic_buttons << std::dec << ','
+            << movement << ','
+            << (jump_pressed ? 1 : 0) << ','
+            << expected_x << ','
+            << actual_x << ','
+            << (actual_x - expected_x) << ','
+            << expected_y << ','
+            << actual_y << ','
+            << (actual_y - expected_y) << ','
+            << expected_ground_speed << ','
+            << actual_ground_speed << ','
+            << (actual_ground_speed - expected_ground_speed) << ','
+            << expected_velocity_x << ','
+            << actual_velocity_x << ','
+            << (actual_velocity_x - expected_velocity_x) << ','
+            << expected_velocity_y << ','
+            << actual_velocity_y << ','
+            << (actual_velocity_y - expected_velocity_y) << ','
+            << "0x" << std::hex << expected_angle << std::dec << ','
+            << "0x" << std::hex << actual_angle << std::dec << ','
+            << (expected_grounded ? 1 : 0) << ','
+            << (player.grounded ? 1 : 0) << ','
+            << player.debug_walk_delta_x << ','
+            << player.debug_walk_delta_y << ','
+            << "0x" << std::hex << (player.debug_walk_angle & 0xFF) << std::dec << ','
+            << player.debug_floor_hit_delta_y << ','
+            << player.debug_floor_hit_response << ','
+            << player.debug_floor_hit_local_x << ','
+            << player.debug_floor_hit_local_y << ','
+            << player.debug_floor_hit_collision_type << ','
+            << "0x" << std::hex << (player.debug_no_ground_sector & 0xFF) << std::dec << ','
+            << (player.debug_no_ground_hit ? 1 : 0) << ','
+            << player.debug_no_ground_delta_x << ','
+            << player.debug_no_ground_delta_y << ','
+            << "0x" << std::hex << (player.debug_no_ground_angle & 0xFF) << std::dec
+            << ','
+            << (player.debug_no_ground_probe_a_hit ? 1 : 0) << ','
+            << player.debug_no_ground_probe_a_delta << ','
+            << "0x" << std::hex << (player.debug_no_ground_probe_a_angle & 0xFF) << std::dec
+            << ','
+            << (player.debug_no_ground_probe_b_hit ? 1 : 0) << ','
+            << player.debug_no_ground_probe_b_delta << ','
+            << "0x" << std::hex << (player.debug_no_ground_probe_b_angle & 0xFF) << std::dec
+            << '\n';
+        ++samples;
+    }
+
+    std::cout << "Teacher trace used " << resolved_trace_path << '\n';
+    std::cout << "Teacher-forced output wrote " << output_path
+              << " from " << samples << " logic samples\n";
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -2919,6 +3128,8 @@ int main(int argc, char* argv[]) {
     std::filesystem::path requested_data;
     std::filesystem::path replay_trace_path;
     std::filesystem::path trace_output_path;
+    std::filesystem::path teacher_trace_path;
+    std::filesystem::path teacher_output_path;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if (argument == "--smoke-test") {
@@ -2927,17 +3138,25 @@ int main(int argc, char* argv[]) {
             replay_trace_path = argv[++index];
         } else if (argument == "--trace-out" && index + 1 < argc) {
             trace_output_path = argv[++index];
+        } else if (argument == "--teacher-trace" && index + 1 < argc) {
+            teacher_trace_path = argv[++index];
+        } else if (argument == "--teacher-out" && index + 1 < argc) {
+            teacher_output_path = argv[++index];
         } else if (requested_data.empty()) {
             requested_data = argv[index];
         } else {
             std::cerr
                 << "Usage: sonic-pocket-viewer [data-directory] [--smoke-test] "
-                   "[--replay-trace trace.csv --trace-out native.csv]\n";
+                   "[--replay-trace trace.csv --trace-out native.csv] "
+                   "[--teacher-trace trace.csv --teacher-out teacher.csv]\n";
             return 2;
         }
     }
     if (!replay_trace_path.empty() && trace_output_path.empty()) {
         trace_output_path = "out/native-runtime-trace.csv";
+    }
+    if (!teacher_trace_path.empty() && teacher_output_path.empty()) {
+        teacher_output_path = "out/native-teacher-trace.csv";
     }
 
     const auto data_directory =
@@ -2961,6 +3180,9 @@ int main(int argc, char* argv[]) {
     }
     if (!replay_trace_path.empty()) {
         return replay_trace(collision_mask, replay_trace_path, trace_output_path);
+    }
+    if (!teacher_trace_path.empty()) {
+        return teacher_trace(collision_mask, teacher_trace_path, teacher_output_path);
     }
 
     Application app;
