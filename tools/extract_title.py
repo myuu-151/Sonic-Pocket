@@ -725,15 +725,10 @@ def render_intro_frames(
     output: Path,
     sprite_directory: Path,
     art_directory: Path,
-    title_tile_data: bytes,
-    title_map1: bytes,
-    title_map2: bytes,
     sprite_tiles: bytes,
     palette_collection: bytes,
     plane1_palettes: list[list[tuple[int, int, int]]],
     plane2_palettes: list[list[tuple[int, int, int]]],
-    title_plane1_palettes: list[list[tuple[int, int, int]]],
-    title_plane2_palettes: list[list[tuple[int, int, int]]],
     background: tuple[int, int, int],
 ) -> list[str]:
     intro_dir = output / "intro"
@@ -749,93 +744,9 @@ def render_intro_frames(
     logo_face_palette = build_palettes(palette_collection, [INTRO_LOGO_FACE_PALETTE])[0]
     logo_shade_palette = build_palettes(palette_collection, [INTRO_LOGO_SHADE_PALETTE])[0]
     logo_body_palette = build_palettes(palette_collection, [INTRO_LOGO_BODY_PALETTE])[0]
-    title_face_palette = build_palettes(palette_collection, [TITLE_FACE_PALETTE])[0]
-    title_body_palette = build_palettes(palette_collection, [TITLE_BODY_PALETTE])[0]
     face_sequence = expand_timed_sequence(INTRO_LOGO_FACE_SEQUENCE)
     shade_sequence = expand_timed_sequence(INTRO_LOGO_SHADE_SEQUENCE)
     body_sequence = expand_timed_sequence(INTRO_LOGO_BODY_SEQUENCE)
-
-    def interpolate_palette(
-        source: list[tuple[int, int, int]],
-        target: list[tuple[int, int, int]],
-        amount: float,
-    ) -> list[tuple[int, int, int]]:
-        return [
-            tuple(round(a + (b - a) * amount) for a, b in zip(source_color, target_color))
-            for source_color, target_color in zip(source, target)
-        ]
-
-    def render_title_sonic_overlay(face_index: int = 0, body_index: int = 0) -> bytes:
-        body_name = TITLE_BODY_FRAMES[body_index % len(TITLE_BODY_FRAMES)][0]
-        face_name = TITLE_FACE_FRAMES[face_index % len(TITLE_FACE_FRAMES)][0]
-        body = render_title_sprite_canvas(
-            sprite_tiles,
-            (sprite_directory / body_name).read_bytes(),
-            title_body_palette,
-            origin_x=TITLE_SONIC_X,
-            origin_y=TITLE_SONIC_Y,
-        )
-        face = render_title_sprite_canvas(
-            sprite_tiles,
-            (sprite_directory / face_name).read_bytes(),
-            title_face_palette,
-            origin_x=TITLE_SONIC_X,
-            origin_y=TITLE_SONIC_Y,
-        )
-        return alpha_composite_rgba(body, face)
-
-    def render_intro_logo_background() -> bytes:
-        plane2, plane2_mask = render_scroll_map(
-            scroll2, patterns, plane2_palettes, camera_y=0
-        )
-        plane1, plane1_mask = render_scroll_map(
-            scroll1, patterns, plane1_palettes, camera_y=0
-        )
-        rgb = composite_rgb(
-            composite_rgb(solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, intro_background), plane2, plane2_mask),
-            plane1,
-            plane1_mask,
-        )
-        return rgba_from_rgb(rgb)
-
-    def render_faded_title(amount: float) -> bytes:
-        faded_plane1 = [
-            interpolate_palette(plane1_palettes[index], title_plane1_palettes[index], amount)
-            for index in range(16)
-        ]
-        faded_plane2 = [
-            interpolate_palette(plane2_palettes[index], title_plane2_palettes[index], amount)
-            for index in range(16)
-        ]
-        faded_background = tuple(
-            round(a + (b - a) * amount) for a, b in zip(intro_background, background)
-        )
-        plane2, plane2_mask = render_tilemap(
-            title_tile_data,
-            title_map2,
-            faded_plane2,
-            width_tiles=TITLE_WIDTH_TILES,
-            height_tiles=TITLE_HEIGHT_TILES,
-            skip_header=4,
-            palette_shift=9,
-            transparent_zero=True,
-        )
-        plane1, plane1_mask = render_tilemap(
-            title_tile_data,
-            title_map1,
-            faded_plane1,
-            width_tiles=TITLE_WIDTH_TILES,
-            height_tiles=TITLE_HEIGHT_TILES,
-            skip_header=4,
-            palette_shift=9,
-            transparent_zero=True,
-        )
-        rgb = composite_rgb(
-            composite_rgb(solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, faded_background), plane2, plane2_mask),
-            plane1,
-            plane1_mask,
-        )
-        return alpha_composite_rgba(rgba_from_rgb(rgb), render_title_sonic_overlay())
 
     patterns: list[tuple[tuple[int, ...], ...] | None] = [None] * 512
     scroll1 = [0] * (32 * 32)
@@ -1038,32 +949,6 @@ def render_intro_frames(
         rendered.append(str(frame_path))
         frame_index += 1
 
-    # After the logo reveal, the ROM swaps from the intro Sonic animation to
-    # the normal title Sonic sprites before the final title tilemaps finish
-    # fading in. Keeping this as its own phase avoids holding the curled intro
-    # Sonic over the title logo during the handoff.
-    for transition_frame in range(12):
-        rgba = alpha_composite_rgba(
-            render_intro_logo_background(),
-            render_title_sonic_overlay(face_index=3, body_index=0),
-        )
-        frame_path = intro_dir / f"frame_{frame_index:04d}.png"
-        write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
-        rendered.append(str(frame_path))
-        frame_index += 1
-
-    # loc_3E7CF9 loads the final title tilemaps and starts palette-object
-    # fades from the intro palette bank into TitleScr_PalLst. The hardware
-    # fades per colour component; linear RGB interpolation is close enough to
-    # remove the corrupted handoff while the exact palette-object stepping is
-    # still being mapped.
-    for fade_frame in range(31):
-        amount = min(1.0, (fade_frame + 3) / 30.0)
-        frame_path = intro_dir / f"frame_{frame_index:04d}.png"
-        write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, render_faded_title(amount))
-        rendered.append(str(frame_path))
-        frame_index += 1
-
     return rendered
 
 
@@ -1125,15 +1010,10 @@ def main() -> int:
         args.output,
         sprite_directory,
         art,
-        tile_data,
-        map1,
-        map2,
         sprite_tiles,
         palette_collection,
         anim_plane1_palettes,
         anim_plane2_palettes,
-        plane1_palettes,
-        plane2_palettes,
         background,
     )
 
