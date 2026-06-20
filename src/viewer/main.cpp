@@ -1,11 +1,13 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -2763,6 +2765,7 @@ bool render_title_frame(
     Application& app,
     SDL_Texture* plane2,
     SDL_Texture* plane1,
+    SDL_Texture* sonic,
     SDL_Texture* prompt,
     bool prompt_visible) {
     SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
@@ -2772,6 +2775,9 @@ bool render_title_frame(
     }
     if (plane1 != nullptr && !SDL_RenderTexture(app.renderer, plane1, nullptr, nullptr)) {
         return fail("Unable to render title foreground");
+    }
+    if (sonic != nullptr && !SDL_RenderTexture(app.renderer, sonic, nullptr, nullptr)) {
+        return fail("Unable to render title Sonic");
     }
     if (prompt != nullptr && prompt_visible) {
         SDL_FRect prompt_destination{0.0F, 136.0F, 160.0F, 16.0F};
@@ -2795,12 +2801,25 @@ int run_title_screen(
     Texture plane2;
     Texture plane1;
     Texture prompt;
+    std::vector<Texture> sonic_frames;
     if (std::filesystem::is_regular_file(plane2_path) &&
         std::filesystem::is_regular_file(plane1_path)) {
         plane2 = load_png(app.renderer, plane2_path);
         plane1 = load_png(app.renderer, plane1_path);
         if (std::filesystem::is_regular_file(prompt_path)) {
             prompt = load_png(app.renderer, prompt_path);
+        }
+        for (int index = 0;; ++index) {
+            const auto sonic_path =
+                title_directory / ("title_sonic_" + std::to_string(index) + ".png");
+            if (!std::filesystem::is_regular_file(sonic_path)) {
+                break;
+            }
+            Texture sonic = load_png(app.renderer, sonic_path);
+            if (sonic.value == nullptr) {
+                return 1;
+            }
+            sonic_frames.push_back(std::move(sonic));
         }
     } else {
         plane2 = load_png(app.renderer, fallback_title_path);
@@ -2811,7 +2830,25 @@ int run_title_screen(
     }
     SDL_SetWindowTitle(app.window, "Sonic Pocket - Title Screen");
     int frame = 0;
-    if (!render_title_frame(app, plane2.value, plane1.value, prompt.value, true)) {
+    auto title_sonic_texture = [&sonic_frames](int frame_number) -> SDL_Texture* {
+        if (sonic_frames.empty()) {
+            return nullptr;
+        }
+        constexpr std::array<int, 6> kTitleSonicDurations{4, 2, 2, 4, 2, 2};
+        const int cycle_frames = std::accumulate(
+            kTitleSonicDurations.begin(), kTitleSonicDurations.end(), 0);
+        int cursor = frame_number % cycle_frames;
+        for (std::size_t index = 0; index < sonic_frames.size() &&
+             index < kTitleSonicDurations.size(); ++index) {
+            if (cursor < kTitleSonicDurations[index]) {
+                return sonic_frames[index].value;
+            }
+            cursor -= kTitleSonicDurations[index];
+        }
+        return sonic_frames.front().value;
+    };
+    if (!render_title_frame(
+            app, plane2.value, plane1.value, title_sonic_texture(frame), prompt.value, true)) {
         return 1;
     }
     if (smoke_test) {
@@ -2842,7 +2879,13 @@ int run_title_screen(
             }
         }
         const bool prompt_visible = prompt.value == nullptr || ((frame / 10) % 2 == 0);
-        if (!render_title_frame(app, plane2.value, plane1.value, prompt.value, prompt_visible)) {
+        if (!render_title_frame(
+                app,
+                plane2.value,
+                plane1.value,
+                title_sonic_texture(frame),
+                prompt.value,
+                prompt_visible)) {
             return 1;
         }
         ++frame;

@@ -16,6 +16,9 @@ from extract_level import (
     DEFAULT_REFERENCE,
     PALETTE_COLLECTION_OFFSET,
     PALETTE_COLLECTION_SIZE,
+    SPRITE_TILES_OFFSET,
+    SPRITE_TILES_SIZE,
+    background_color,
     build_palettes,
     composite_rgb,
     decode_tile,
@@ -36,6 +39,27 @@ PROMPT_WIDTH_TILES = 20
 PROMPT_HEIGHT_TILES = 2
 PROMPT_DEST_X = 0
 PROMPT_DEST_Y = 17 * 8
+TITLE_BACKDROP_PALETTE = 0x24F
+TITLE_SONIC_X = 0x50
+TITLE_SONIC_Y = 0x4C
+TITLE_FACE_PALETTE = 0x25C
+TITLE_BODY_PALETTE = 0x25B
+TITLE_FACE_FRAMES = [
+    ("0536_92A6.spr", 4),
+    ("0537_92D4.spr", 2),
+    ("0538_9302.spr", 2),
+    ("0539_9330.spr", 4),
+    ("0538_9302.spr", 2),
+    ("0537_92D4.spr", 2),
+]
+TITLE_BODY_FRAMES = [
+    ("053A_935E.spr", 4),
+    ("053B_93B8.spr", 2),
+    ("053C_9412.spr", 2),
+    ("053D_946C.spr", 4),
+    ("053C_9412.spr", 2),
+    ("053B_93B8.spr", 2),
+]
 TITLE_PALETTE_WORDS = [
     0x8250,
     0x8651,
@@ -153,6 +177,72 @@ def rgba_from_rgb_mask(rgb: bytes, mask: bytes) -> bytes:
     return bytes(rgba)
 
 
+def render_title_sprite_canvas(
+    sprite_tiles: bytes,
+    sprite_data: bytes,
+    palette: list[tuple[int, int, int]],
+    *,
+    origin_x: int,
+    origin_y: int,
+) -> bytes:
+    canvas = bytearray(TITLE_WIDTH * TITLE_HEIGHT * 4)
+    tile_count = int.from_bytes(sprite_data[:2], "little")
+    offset = 2
+    tiles_read = 0
+
+    def draw_tile(raw_tile_word: int, signed_x: int, signed_y: int) -> None:
+        tile = decode_tile(sprite_tiles, raw_tile_word)
+        destination_x = origin_x + signed_x
+        destination_y = origin_y + signed_y
+        for y, row in enumerate(tile):
+            target_y = destination_y + y
+            if target_y < 0 or target_y >= TITLE_HEIGHT:
+                continue
+            for x, color_index in enumerate(row):
+                if color_index == 0:
+                    continue
+                target_x = destination_x + x
+                if target_x < 0 or target_x >= TITLE_WIDTH:
+                    continue
+                destination = (target_y * TITLE_WIDTH + target_x) * 4
+                canvas[destination : destination + 3] = bytes(palette[color_index])
+                canvas[destination + 3] = 255
+
+    while tiles_read < tile_count:
+        if offset + 4 > len(sprite_data):
+            raise ValueError("title sprite definition is truncated")
+        tile_word = int.from_bytes(sprite_data[offset : offset + 2], "little")
+        if tile_word == 0xFFFF:
+            if offset + 8 > len(sprite_data):
+                raise ValueError("title sprite vertical run is truncated")
+            vertical_count = int.from_bytes(sprite_data[offset + 2 : offset + 4], "little")
+            first_tile = int.from_bytes(sprite_data[offset + 4 : offset + 6], "little")
+            signed_x = int.from_bytes(sprite_data[offset + 6 : offset + 7], "little", signed=True)
+            signed_y = int.from_bytes(sprite_data[offset + 7 : offset + 8], "little", signed=True)
+            for tile_offset in range(vertical_count):
+                draw_tile(first_tile + tile_offset, signed_x, signed_y + tile_offset * 8)
+            tiles_read += vertical_count
+            offset += 8
+            continue
+        signed_x = int.from_bytes(sprite_data[offset + 2 : offset + 3], "little", signed=True)
+        signed_y = int.from_bytes(sprite_data[offset + 3 : offset + 4], "little", signed=True)
+        draw_tile(tile_word, signed_x, signed_y)
+        tiles_read += 1
+        offset += 4
+    return bytes(canvas)
+
+
+def alpha_composite_rgba(bottom: bytes, top: bytes) -> bytes:
+    if len(bottom) != len(top):
+        raise ValueError("RGBA layers have different sizes")
+    output = bytearray(bottom)
+    for index in range(0, len(top), 4):
+        if top[index + 3] == 0:
+            continue
+        output[index : index + 4] = top[index : index + 4]
+    return bytes(output)
+
+
 def render_variant(
     output: Path,
     tile_data: bytes,
@@ -160,6 +250,7 @@ def render_variant(
     map2: bytes,
     plane1_palettes: list[list[tuple[int, int, int]]],
     plane2_palettes: list[list[tuple[int, int, int]]],
+    background: tuple[int, int, int],
     *,
     skip_header: int,
     palette_shift: int,
@@ -184,8 +275,9 @@ def render_variant(
         palette_shift=palette_shift,
         transparent_zero=True,
     )
-    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, plane2_palettes[0][0])
-    composite = composite_rgb(composite_rgb(backdrop, plane2, plane2_mask), plane1, plane1_mask)
+    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, background)
+    plane2_composited = composite_rgb(backdrop, plane2, plane2_mask)
+    composite = composite_rgb(plane2_composited, plane1, plane1_mask)
     path = output / f"title_skip{skip_header}_pal{palette_shift}.png"
     write_png(path, TITLE_WIDTH, TITLE_HEIGHT, composite)
     return path
@@ -194,11 +286,15 @@ def render_variant(
 def render_layers(
     output: Path,
     tile_data: bytes,
+    sprite_tiles: bytes,
     map1: bytes,
     map2: bytes,
     prompt_map: bytes,
+    sprite_directory: Path,
+    palette_collection: bytes,
     plane1_palettes: list[list[tuple[int, int, int]]],
     plane2_palettes: list[list[tuple[int, int, int]]],
+    background: tuple[int, int, int],
     *,
     skip_header: int,
     palette_shift: int,
@@ -234,14 +330,16 @@ def render_layers(
         transparent_zero=True,
     )
 
-    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, plane2_palettes[0][0])
-    composite = composite_rgb(composite_rgb(backdrop, plane2, plane2_mask), plane1, plane1_mask)
+    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, background)
+    plane2_composited = composite_rgb(backdrop, plane2, plane2_mask)
+    composite = composite_rgb(plane2_composited, plane1, plane1_mask)
     title_path = output / "title.png"
     plane2_path = output / "plane2.png"
     plane1_path = output / "plane1.png"
     prompt_path = output / "press_prompt.png"
     prompt_preview_path = output / "title_with_prompt.png"
-    write_png(plane2_path, TITLE_WIDTH, TITLE_HEIGHT, plane2)
+    sonic_frame_paths: list[str] = []
+    write_png(plane2_path, TITLE_WIDTH, TITLE_HEIGHT, plane2_composited)
     write_png_rgba(plane1_path, TITLE_WIDTH, TITLE_HEIGHT, rgba_from_rgb_mask(plane1, plane1_mask))
     write_png(title_path, TITLE_WIDTH, TITLE_HEIGHT, composite)
     write_png_rgba(
@@ -250,6 +348,32 @@ def render_layers(
         PROMPT_HEIGHT_TILES * 8,
         rgba_from_rgb_mask(prompt, prompt_mask),
     )
+
+    face_palette = build_palettes(palette_collection, [TITLE_FACE_PALETTE])[0]
+    body_palette = build_palettes(palette_collection, [TITLE_BODY_PALETTE])[0]
+    for index, ((face_name, delay), (body_name, body_delay)) in enumerate(
+        zip(TITLE_FACE_FRAMES, TITLE_BODY_FRAMES)
+    ):
+        if delay != body_delay:
+            raise ValueError("title Sonic face/body animation timing mismatch")
+        body = render_title_sprite_canvas(
+            sprite_tiles,
+            (sprite_directory / body_name).read_bytes(),
+            body_palette,
+            origin_x=TITLE_SONIC_X,
+            origin_y=TITLE_SONIC_Y,
+        )
+        face = render_title_sprite_canvas(
+            sprite_tiles,
+            (sprite_directory / face_name).read_bytes(),
+            face_palette,
+            origin_x=TITLE_SONIC_X,
+            origin_y=TITLE_SONIC_Y,
+        )
+        frame = alpha_composite_rgba(body, face)
+        frame_path = output / f"title_sonic_{index}.png"
+        write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, frame)
+        sonic_frame_paths.append(str(frame_path))
 
     preview = bytearray(composite)
     for y in range(PROMPT_HEIGHT_TILES * 8):
@@ -263,7 +387,36 @@ def render_layers(
                 preview[(dst_y * TITLE_WIDTH + dst_x) * 3 : (dst_y * TITLE_WIDTH + dst_x) * 3 + 3] = (
                     prompt[source * 3 : source * 3 + 3]
                 )
-    write_png(prompt_preview_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(preview))
+    preview_rgba = bytearray(TITLE_WIDTH * TITLE_HEIGHT * 4)
+    for pixel in range(TITLE_WIDTH * TITLE_HEIGHT):
+        preview_rgba[pixel * 4 : pixel * 4 + 3] = preview[pixel * 3 : pixel * 3 + 3]
+        preview_rgba[pixel * 4 + 3] = 255
+    if sonic_frame_paths:
+        preview_rgba = bytearray(
+            alpha_composite_rgba(
+                bytes(preview_rgba),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    (sprite_directory / TITLE_BODY_FRAMES[0][0]).read_bytes(),
+                    body_palette,
+                    origin_x=TITLE_SONIC_X,
+                    origin_y=TITLE_SONIC_Y,
+                ),
+            )
+        )
+        preview_rgba = bytearray(
+            alpha_composite_rgba(
+                bytes(preview_rgba),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    (sprite_directory / TITLE_FACE_FRAMES[0][0]).read_bytes(),
+                    face_palette,
+                    origin_x=TITLE_SONIC_X,
+                    origin_y=TITLE_SONIC_Y,
+                ),
+            )
+        )
+    write_png_rgba(prompt_preview_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(preview_rgba))
 
     return {
         "title": str(title_path),
@@ -271,6 +424,7 @@ def render_layers(
         "plane1": str(plane1_path),
         "press_prompt": str(prompt_path),
         "title_with_prompt": str(prompt_preview_path),
+        "sonic_frames": sonic_frame_paths,
     }
 
 
@@ -292,15 +446,18 @@ def main() -> int:
 
     art = args.reference / "art"
     tile_data = (art / "data_08BD98.til").read_bytes()
+    sprite_tiles = rom[SPRITE_TILES_OFFSET : SPRITE_TILES_OFFSET + SPRITE_TILES_SIZE]
     map1 = (art / "data_08F5C8.map").read_bytes()
     map2 = (art / "data_08F2CC.map").read_bytes()
     prompt_map = (art / "data_08F8C4.map").read_bytes()
+    sprite_directory = args.reference / "sprites"
     palette_collection = rom[
         PALETTE_COLLECTION_OFFSET : PALETTE_COLLECTION_OFFSET + PALETTE_COLLECTION_SIZE
     ]
     # SetPaletteList stores the lower 10 bits as the palette collection ID.
     # The upper bits select the plane-palette object slot.
     plane1_palettes, plane2_palettes, palette_ids = title_palette_banks(palette_collection)
+    background = background_color(palette_collection, TITLE_BACKDROP_PALETTE)
 
     args.output.mkdir(parents=True, exist_ok=True)
     variants = [(4, 9)]
@@ -310,11 +467,15 @@ def main() -> int:
     layer_paths = render_layers(
         args.output,
         tile_data,
+        sprite_tiles,
         map1,
         map2,
         prompt_map,
+        sprite_directory,
+        palette_collection,
         plane1_palettes,
         plane2_palettes,
+        background,
         skip_header=4,
         palette_shift=9,
     )
@@ -327,6 +488,7 @@ def main() -> int:
             map2,
             plane1_palettes,
             plane2_palettes,
+            background,
             skip_header=skip,
             palette_shift=shift,
         ))
@@ -349,8 +511,10 @@ def main() -> int:
             "map1": "TitleScr_TMap1 / art/data_08F5C8.map",
             "map2": "TitleScr_TMap2 / art/data_08F2CC.map",
             "prompt": "TMap_28F8C4 / art/data_08F8C4.map",
+            "sonic_sprites": "Spr_0536..Spr_053D / sprites/*.spr",
             "palette_words": [f"0x{word:04X}" for word in TITLE_PALETTE_WORDS],
             "palette_ids": palette_ids,
+            "background_palette": f"0x{TITLE_BACKDROP_PALETTE:03X}",
         },
         "layers": {
             **layer_paths,
