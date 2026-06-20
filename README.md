@@ -37,6 +37,23 @@ The native SDL3 prototype then displays that data through a 160 by 152
 integer-scaled viewport with controllable Sonic movement; see
 [`docs/pc-viewer.md`](docs/pc-viewer.md).
 
+### Title-screen parity workflow
+
+The title screen has a local teacher-capture fallback so the viewer can play
+the measured ROM title sequence while the ROM-derived extractor is still being
+completed. Capture frames with BizHawk, then import them locally:
+
+```powershell
+python tools/extract_title.py --all-variants
+python tools/import_title_teacher_sequence.py --start 460
+build\viewer\Release\sonic-pocket-viewer.exe --title-screen
+```
+
+Captured PNGs stay under ignored `out/title-teacher/` and `out/title/`
+directories and must not be committed. Generated extractor frames should only
+replace teacher frames after `tools/compare_title_frames.py` proves they match
+the BizHawk reference.
+
 ## Repository policy
 
 This repository does not contain the original ROM, extracted game assets,
@@ -59,6 +76,9 @@ Preferred evidence sources:
 - Ghidra with the TLCS-900/H processor and Neo Geo Pocket loader;
 - BizHawk runtime traces from `scripts/bizhawk-player-trace.lua`;
 - native replay output from the viewer's `--replay-trace` mode.
+- title-screen teacher captures imported by
+  `tools/import_title_teacher_sequence.py`, for visual parity while replacing
+  captured frames with generated ROM/disassembly-derived frames.
 
 When behavior differs from the ROM, identify the original routine first, port
 the general rule, then prove the change with a trace or focused runtime test.

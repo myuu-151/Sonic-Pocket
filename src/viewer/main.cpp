@@ -2821,6 +2821,8 @@ int run_title_screen(
     std::vector<Texture> sonic_frames;
     std::vector<Texture> intro_frames;
     const auto intro_directory = title_directory / "intro";
+    const bool intro_is_teacher_capture =
+        std::filesystem::is_regular_file(intro_directory / "teacher_capture.txt");
     if (std::filesystem::is_directory(intro_directory)) {
         for (int index = 0;; ++index) {
             std::ostringstream filename;
@@ -2908,6 +2910,8 @@ int run_title_screen(
     bool playing_intro = !intro_frames.empty();
     bool showing_menu = false;
     int intro_frame = 0;
+    int title_logic_tick = 0;
+    constexpr Uint32 kTitleFrameDelayMs = 16;
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -2952,12 +2956,27 @@ int run_title_screen(
             if (!render_title_intro_frame(app, intro_frames[clamped_intro_frame].value)) {
                 return 1;
             }
-            ++intro_frame;
-            if (intro_frame >= static_cast<int>(intro_frames.size())) {
-                playing_intro = false;
-                frame = 0;
+            if (intro_is_teacher_capture) {
+                if (intro_frame + 1 < static_cast<int>(intro_frames.size())) {
+                    ++intro_frame;
+                }
+            } else {
+                ++title_logic_tick;
+                if ((title_logic_tick & 1) == 0) {
+                    ++intro_frame;
+                    if (intro_frame >= static_cast<int>(intro_frames.size())) {
+                        playing_intro = false;
+                        frame = 0;
+                        title_logic_tick = 0;
+                    }
+                }
+                if (intro_frame >= static_cast<int>(intro_frames.size())) {
+                    playing_intro = false;
+                    frame = 0;
+                    title_logic_tick = 0;
+                }
             }
-            SDL_Delay(16);
+            SDL_Delay(kTitleFrameDelayMs);
             continue;
         }
         SDL_Texture* overlay = nullptr;
@@ -2973,8 +2992,11 @@ int run_title_screen(
         if (!render_title_frame(app, plane2.value, plane1.value, title_sonic_texture(frame), overlay, true)) {
             return 1;
         }
-        ++frame;
-        SDL_Delay(16);
+        ++title_logic_tick;
+        if ((title_logic_tick & 1) == 0) {
+            ++frame;
+        }
+        SDL_Delay(kTitleFrameDelayMs);
     }
     return 0;
 }

@@ -723,6 +723,8 @@ def render_intro_frames(
 ) -> list[str]:
     intro_dir = output / "intro"
     intro_dir.mkdir(parents=True, exist_ok=True)
+    for stale_frame in intro_dir.glob("frame_*.png"):
+        stale_frame.unlink()
 
     intro_background = background_color(palette_collection, TITLE_INTRO_BACKDROP_PALETTE)
     particle_palette = build_palettes(palette_collection, [0x01B])[0]
@@ -797,8 +799,12 @@ def render_intro_frames(
     reveal_patch_start = camera_scroll_frames + pre_reveal_wait_frames
     logo_start = reveal_patch_start + len(plane1_patch_maps)
     logo_patch_interval = 3
-    logo_end = logo_start + len(logo_map_patches) * logo_patch_interval + 2
-    max_frames = logo_end
+    # The ROM leaves the animated intro after generated frame 128 in the
+    # current teacher capture and hands over to the final title-screen
+    # tilemaps/fade state. Keeping later generated intro frames on screen makes
+    # Sonic look corrupted because those frames are not the active ROM
+    # composition anymore.
+    max_frames = logo_start + 13
     for frame in range(max_frames):
         if reveal_patch_start <= frame < logo_start and reveal_patch_index < len(plane1_patch_maps):
             destination_bytes = 0 if reveal_patch_index == 5 else 0x200

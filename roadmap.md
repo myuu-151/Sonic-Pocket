@@ -59,6 +59,9 @@ and audio dispatch.
 - [x] Build full-plane and collision-map viewers for the first representative
       stage.
 - [ ] Build sprite and animation viewers.
+- [x] Add title-screen BizHawk teacher capture comparison/import tooling so
+      visible title parity can be preserved while generated extractors are
+      replaced frame-by-frame.
 - [ ] Identify compression formats and implement decompressors.
 - [ ] Build a MAME trace importer connected to the symbol database.
 - [x] Build an asset extractor that requires and verifies the user's original
@@ -66,8 +69,8 @@ and audio dispatch.
 - [ ] Document every discovered data format with ROM addresses and validation
       examples.
 
-Generated assets and full-ROM disassembly remain local and must not be committed
-to the public repository.
+Generated assets, teacher-captured screenshots, and full-ROM disassembly remain
+local and must not be committed to the public repository.
 
 ### Exit criteria
 

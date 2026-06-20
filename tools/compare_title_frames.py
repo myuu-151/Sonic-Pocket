@@ -109,6 +109,27 @@ def resize_nearest(image: Image, width: int, height: int) -> Image:
     return Image(width, height, bytes(output))
 
 
+def png_chunk(kind: bytes, data: bytes) -> bytes:
+    import binascii
+
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", binascii.crc32(kind + data) & 0xFFFFFFFF)
+
+
+def write_png_rgba(path: Path, width: int, height: int, rgba: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scanlines = bytearray()
+    stride = width * 4
+    for y in range(height):
+        scanlines.append(0)
+        scanlines.extend(rgba[y * stride : (y + 1) * stride])
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(bytes(scanlines), 9))
+        + png_chunk(b"IEND", b"")
+    )
+
+
 def diff_score(a: Image, b: Image, sample_step: int) -> tuple[float, float, int]:
     if (a.width, a.height) != (b.width, b.height):
         b = resize_nearest(b, a.width, a.height)
@@ -128,6 +149,22 @@ def diff_score(a: Image, b: Image, sample_step: int) -> tuple[float, float, int]
     mean_abs = absolute / (samples * 3)
     normalized = mean_abs / 255.0
     return mean_abs, normalized, max_channel
+
+
+def write_diff_image(path: Path, teacher: Image, generated: Image) -> None:
+    if (teacher.width, teacher.height) != (generated.width, generated.height):
+        generated = resize_nearest(generated, teacher.width, teacher.height)
+    output = bytearray(teacher.width * teacher.height * 4)
+    for index in range(0, len(output), 4):
+        delta = (
+            abs(teacher.rgba[index] - generated.rgba[index])
+            + abs(teacher.rgba[index + 1] - generated.rgba[index + 1])
+            + abs(teacher.rgba[index + 2] - generated.rgba[index + 2])
+        )
+        # Amplify small differences so one-pixel/tile corruption is visible.
+        value = min(255, delta * 2)
+        output[index : index + 4] = bytes((value, value, value, 255))
+    write_png_rgba(path, teacher.width, teacher.height, bytes(output))
 
 
 def pngs(directory: Path) -> list[Path]:
@@ -152,6 +189,7 @@ def main() -> int:
         default=2,
         help="compare every Nth pixel horizontally and vertically; 1 = full frame",
     )
+    parser.add_argument("--diff-image", type=Path, default=None, help="write a diff image for the first compared teacher frame")
     args = parser.parse_args()
 
     teacher_paths = pngs(args.teacher)
@@ -168,6 +206,8 @@ def main() -> int:
     generated = [(path, read_png(path)) for path in generated_paths]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, str]] = []
+    first_teacher: Image | None = None
+    first_best: Image | None = None
     for teacher_index, teacher_path in enumerate(teacher_paths):
         teacher = read_png(teacher_path)
         best: tuple[float, float, int, Path] | None = None
@@ -178,6 +218,9 @@ def main() -> int:
             if best is None or normalized < best[1]:
                 best = (mean_abs, normalized, max_channel, generated_path)
         assert best is not None
+        if args.diff_image is not None and first_teacher is None:
+            first_teacher = teacher
+            first_best = read_png(best[3])
         rows.append(
             {
                 "teacher_index": str(teacher_index),
@@ -199,6 +242,9 @@ def main() -> int:
     print(f"Compared {len(rows)} teacher frame(s) against {len(generated)} generated frame(s)")
     print(f"Best:  teacher {best_row['teacher_index']} -> {best_row['best_generated']} error={best_row['normalized_error']}")
     print(f"Worst: teacher {worst['teacher_index']} -> {worst['best_generated']} error={worst['normalized_error']}")
+    if args.diff_image is not None and first_teacher is not None and first_best is not None:
+        write_diff_image(args.diff_image, first_teacher, first_best)
+        print(args.diff_image)
     print(args.output)
     return 0
 
