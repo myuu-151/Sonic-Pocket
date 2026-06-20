@@ -56,6 +56,43 @@ TITLE_PALETTE_WORDS = [
 ]
 
 
+def title_palette_banks(
+    palette_collection: bytes,
+) -> tuple[list[list[tuple[int, int, int]]], list[list[tuple[int, int, int]]], list[int]]:
+    palette_ids = [word & 0x03FF for word in TITLE_PALETTE_WORDS]
+    decoded = build_palettes(palette_collection, palette_ids)
+    empty = [(0, 0, 0)] * 4
+    plane1 = [empty for _ in range(16)]
+    plane2 = [empty for _ in range(16)]
+    for word, palette in zip(TITLE_PALETTE_WORDS, decoded):
+        slot = (word >> 10) & 0x3F
+        slot_index = slot & 0x0F
+        bank = slot & 0x30
+        if bank == 0x10:
+            plane1[slot_index] = palette
+        elif bank == 0x20:
+            plane2[slot_index] = palette
+        elif bank == 0x30:
+            # Title prompt/window data is copied into scroll plane 1.
+            plane1[slot_index] = palette
+    return plane1, plane2, palette_ids
+
+
+def decode_title_tile(tile_data: bytes, tile_id: int) -> tuple[tuple[int, ...], ...]:
+    """Decode a title tile.
+
+    TitleScr_Tiles is copied with CopyTileBlk, whose first word is a pattern
+    count. The stage extractor's decode_tile reads raw tile data from byte 0,
+    so using it here shifts every title tile by the two-byte count header.
+    """
+    if len(tile_data) < 2:
+        raise ValueError("title tile data is missing its tile count")
+    tile_count = int.from_bytes(tile_data[:2], "little")
+    if tile_id >= tile_count:
+        raise ValueError(f"title tile {tile_id} outside tile count {tile_count}")
+    return decode_tile(tile_data[2:], tile_id)
+
+
 def render_tilemap(
     tile_data: bytes,
     map_data: bytes,
@@ -80,13 +117,15 @@ def render_tilemap(
     tile_cache: dict[int, tuple[tuple[int, ...], ...]] = {}
 
     for index, entry in enumerate(entries):
+        # CopyTileMapBlk skips the 4-byte title map header and copies these
+        # words straight into NGPC scroll map memory.
         tile_id = entry & 0x01FF
         palette_slot = (entry >> palette_shift) & 0x0F
         flip_y = (entry & 0x4000) != 0
         flip_x = (entry & 0x8000) != 0
         tile = tile_cache.get(tile_id)
         if tile is None:
-            tile = decode_tile(tile_data, tile_id)
+            tile = decode_title_tile(tile_data, tile_id)
             tile_cache[tile_id] = tile
         dst_x = (index % width_tiles) * 8
         dst_y = (index // width_tiles) * 8
@@ -119,7 +158,8 @@ def render_variant(
     tile_data: bytes,
     map1: bytes,
     map2: bytes,
-    palettes: list[list[tuple[int, int, int]]],
+    plane1_palettes: list[list[tuple[int, int, int]]],
+    plane2_palettes: list[list[tuple[int, int, int]]],
     *,
     skip_header: int,
     palette_shift: int,
@@ -127,7 +167,7 @@ def render_variant(
     plane2, plane2_mask = render_tilemap(
         tile_data,
         map2,
-        palettes,
+        plane2_palettes,
         width_tiles=TITLE_WIDTH_TILES,
         height_tiles=TITLE_HEIGHT_TILES,
         skip_header=skip_header,
@@ -137,14 +177,14 @@ def render_variant(
     plane1, plane1_mask = render_tilemap(
         tile_data,
         map1,
-        palettes,
+        plane1_palettes,
         width_tiles=TITLE_WIDTH_TILES,
         height_tiles=TITLE_HEIGHT_TILES,
         skip_header=skip_header,
         palette_shift=palette_shift,
         transparent_zero=True,
     )
-    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, palettes[0][0])
+    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, plane2_palettes[0][0])
     composite = composite_rgb(composite_rgb(backdrop, plane2, plane2_mask), plane1, plane1_mask)
     path = output / f"title_skip{skip_header}_pal{palette_shift}.png"
     write_png(path, TITLE_WIDTH, TITLE_HEIGHT, composite)
@@ -157,7 +197,8 @@ def render_layers(
     map1: bytes,
     map2: bytes,
     prompt_map: bytes,
-    palettes: list[list[tuple[int, int, int]]],
+    plane1_palettes: list[list[tuple[int, int, int]]],
+    plane2_palettes: list[list[tuple[int, int, int]]],
     *,
     skip_header: int,
     palette_shift: int,
@@ -165,7 +206,7 @@ def render_layers(
     plane2, plane2_mask = render_tilemap(
         tile_data,
         map2,
-        palettes,
+        plane2_palettes,
         width_tiles=TITLE_WIDTH_TILES,
         height_tiles=TITLE_HEIGHT_TILES,
         skip_header=skip_header,
@@ -175,7 +216,7 @@ def render_layers(
     plane1, plane1_mask = render_tilemap(
         tile_data,
         map1,
-        palettes,
+        plane1_palettes,
         width_tiles=TITLE_WIDTH_TILES,
         height_tiles=TITLE_HEIGHT_TILES,
         skip_header=skip_header,
@@ -185,7 +226,7 @@ def render_layers(
     prompt, prompt_mask = render_tilemap(
         tile_data,
         prompt_map,
-        palettes,
+        plane1_palettes,
         width_tiles=PROMPT_WIDTH_TILES,
         height_tiles=PROMPT_HEIGHT_TILES,
         skip_header=skip_header,
@@ -193,7 +234,7 @@ def render_layers(
         transparent_zero=True,
     )
 
-    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, palettes[0][0])
+    backdrop = solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, plane2_palettes[0][0])
     composite = composite_rgb(composite_rgb(backdrop, plane2, plane2_mask), plane1, plane1_mask)
     title_path = output / "title.png"
     plane2_path = output / "plane2.png"
@@ -257,8 +298,9 @@ def main() -> int:
     palette_collection = rom[
         PALETTE_COLLECTION_OFFSET : PALETTE_COLLECTION_OFFSET + PALETTE_COLLECTION_SIZE
     ]
-    palette_ids = [word & 0xFF for word in TITLE_PALETTE_WORDS]
-    palettes = build_palettes(palette_collection, palette_ids)
+    # SetPaletteList stores the lower 10 bits as the palette collection ID.
+    # The upper bits select the plane-palette object slot.
+    plane1_palettes, plane2_palettes, palette_ids = title_palette_banks(palette_collection)
 
     args.output.mkdir(parents=True, exist_ok=True)
     variants = [(4, 9)]
@@ -271,7 +313,8 @@ def main() -> int:
         map1,
         map2,
         prompt_map,
-        palettes,
+        plane1_palettes,
+        plane2_palettes,
         skip_header=4,
         palette_shift=9,
     )
@@ -282,7 +325,8 @@ def main() -> int:
             tile_data,
             map1,
             map2,
-            palettes,
+            plane1_palettes,
+            plane2_palettes,
             skip_header=skip,
             palette_shift=shift,
         ))
