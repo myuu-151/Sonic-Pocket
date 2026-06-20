@@ -2759,6 +2759,98 @@ bool render_frame(Application& app, SDL_Texture* stage, SDL_Texture* collision,
     return true;
 }
 
+bool render_title_frame(
+    Application& app,
+    SDL_Texture* plane2,
+    SDL_Texture* plane1,
+    SDL_Texture* prompt,
+    bool prompt_visible) {
+    SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
+    SDL_RenderClear(app.renderer);
+    if (plane2 != nullptr && !SDL_RenderTexture(app.renderer, plane2, nullptr, nullptr)) {
+        return fail("Unable to render title screen");
+    }
+    if (plane1 != nullptr && !SDL_RenderTexture(app.renderer, plane1, nullptr, nullptr)) {
+        return fail("Unable to render title foreground");
+    }
+    if (prompt != nullptr && prompt_visible) {
+        SDL_FRect prompt_destination{0.0F, 136.0F, 160.0F, 16.0F};
+        if (!SDL_RenderTexture(app.renderer, prompt, nullptr, &prompt_destination)) {
+            return fail("Unable to render title prompt");
+        }
+    }
+    SDL_RenderPresent(app.renderer);
+    return true;
+}
+
+int run_title_screen(
+    Application& app,
+    const std::filesystem::path& title_directory,
+    bool smoke_test) {
+    const auto plane2_path = title_directory / "plane2.png";
+    const auto plane1_path = title_directory / "plane1.png";
+    const auto prompt_path = title_directory / "press_prompt.png";
+    const auto fallback_title_path = title_directory / "title.png";
+
+    Texture plane2;
+    Texture plane1;
+    Texture prompt;
+    if (std::filesystem::is_regular_file(plane2_path) &&
+        std::filesystem::is_regular_file(plane1_path)) {
+        plane2 = load_png(app.renderer, plane2_path);
+        plane1 = load_png(app.renderer, plane1_path);
+        if (std::filesystem::is_regular_file(prompt_path)) {
+            prompt = load_png(app.renderer, prompt_path);
+        }
+    } else {
+        plane2 = load_png(app.renderer, fallback_title_path);
+    }
+
+    if (plane2.value == nullptr) {
+        return 1;
+    }
+    SDL_SetWindowTitle(app.window, "Sonic Pocket - Title Screen");
+    int frame = 0;
+    if (!render_title_frame(app, plane2.value, plane1.value, prompt.value, true)) {
+        return 1;
+    }
+    if (smoke_test) {
+        return 0;
+    }
+
+    bool running = true;
+    while (running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT) {
+                running = false;
+            } else if (event.type == SDL_EVENT_KEY_DOWN) {
+                const SDL_Keycode key = event.key.key;
+                if (
+                    key == SDLK_ESCAPE ||
+                    key == SDLK_RETURN ||
+                    key == SDLK_SPACE ||
+                    key == SDLK_Z) {
+                    running = false;
+                }
+            } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                if (
+                    event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ||
+                    event.gbutton.button == SDL_GAMEPAD_BUTTON_START) {
+                    running = false;
+                }
+            }
+        }
+        const bool prompt_visible = prompt.value == nullptr || ((frame / 10) % 2 == 0);
+        if (!render_title_frame(app, plane2.value, plane1.value, prompt.value, prompt_visible)) {
+            return 1;
+        }
+        ++frame;
+        SDL_Delay(16);
+    }
+    return 0;
+}
+
 std::vector<std::string> split_csv_line(const std::string& line) {
     std::vector<std::string> fields;
     std::stringstream stream(line);
@@ -3178,6 +3270,7 @@ int teacher_trace(
 
 int main(int argc, char* argv[]) {
     bool smoke_test = false;
+    bool title_screen = false;
     std::filesystem::path requested_data;
     std::filesystem::path replay_trace_path;
     std::filesystem::path trace_output_path;
@@ -3187,6 +3280,8 @@ int main(int argc, char* argv[]) {
         const std::string_view argument{argv[index]};
         if (argument == "--smoke-test") {
             smoke_test = true;
+        } else if (argument == "--title-screen") {
+            title_screen = true;
         } else if (argument == "--replay-trace" && index + 1 < argc) {
             replay_trace_path = argv[++index];
         } else if (argument == "--trace-out" && index + 1 < argc) {
@@ -3200,6 +3295,7 @@ int main(int argc, char* argv[]) {
         } else {
             std::cerr
                 << "Usage: sonic-pocket-viewer [data-directory] [--smoke-test] "
+                   "[--title-screen] "
                    "[--replay-trace trace.csv --trace-out native.csv] "
                    "[--teacher-trace trace.csv --teacher-out teacher.csv]\n";
             return 2;
@@ -3210,6 +3306,49 @@ int main(int argc, char* argv[]) {
     }
     if (!teacher_trace_path.empty() && teacher_output_path.empty()) {
         teacher_output_path = "out/native-teacher-trace.csv";
+    }
+
+    if (title_screen) {
+        std::filesystem::path title_directory = requested_data.empty()
+            ? std::filesystem::path{"out/title"}
+            : requested_data;
+        if (std::filesystem::is_regular_file(title_directory)) {
+            title_directory = title_directory.parent_path();
+        }
+        if (!std::filesystem::is_regular_file(title_directory / "title.png")) {
+            std::cerr << "Missing extracted title data in " << title_directory << '\n'
+                      << "Run: py -3 tools/extract_title.py\n";
+            return 2;
+        }
+
+        Application app;
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+            fail("Unable to initialize SDL");
+            return 1;
+        }
+
+        const SDL_WindowFlags flags =
+            smoke_test ? SDL_WINDOW_HIDDEN : SDL_WINDOW_RESIZABLE;
+        if (!SDL_CreateWindowAndRenderer(
+                "Sonic Pocket - Title Screen",
+                kLogicalWidth * kDefaultWindowScale,
+                kLogicalHeight * kDefaultWindowScale,
+                flags,
+                &app.window,
+                &app.renderer)) {
+            fail("Unable to create the SDL window");
+            return 1;
+        }
+        if (!SDL_SetRenderLogicalPresentation(
+                app.renderer,
+                kLogicalWidth,
+                kLogicalHeight,
+                SDL_LOGICAL_PRESENTATION_INTEGER_SCALE)) {
+            fail("Unable to set integer-scaled logical presentation");
+            return 1;
+        }
+        SDL_SetRenderVSync(app.renderer, 1);
+        return run_title_screen(app, title_directory, smoke_test);
     }
 
     const auto data_directory =
