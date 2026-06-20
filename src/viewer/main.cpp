@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <numeric>
@@ -2780,10 +2781,20 @@ bool render_title_frame(
         return fail("Unable to render title Sonic");
     }
     if (prompt != nullptr && prompt_visible) {
-        SDL_FRect prompt_destination{0.0F, 136.0F, 160.0F, 16.0F};
-        if (!SDL_RenderTexture(app.renderer, prompt, nullptr, &prompt_destination)) {
+        if (!SDL_RenderTexture(app.renderer, prompt, nullptr, nullptr)) {
             return fail("Unable to render title prompt");
         }
+    }
+    SDL_RenderPresent(app.renderer);
+    return true;
+}
+
+bool render_title_intro_frame(Application& app, SDL_Texture* frame_texture) {
+    SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
+    SDL_RenderClear(app.renderer);
+    if (frame_texture != nullptr &&
+        !SDL_RenderTexture(app.renderer, frame_texture, nullptr, nullptr)) {
+        return fail("Unable to render title intro frame");
     }
     SDL_RenderPresent(app.renderer);
     return true;
@@ -2795,17 +2806,49 @@ int run_title_screen(
     bool smoke_test) {
     const auto plane2_path = title_directory / "plane2.png";
     const auto plane1_path = title_directory / "plane1.png";
+    const auto press_a_off_path = title_directory / "press_a_button_off.png";
+    const auto press_a_path = title_directory / "press_a_button.png";
+    const auto menu_path = title_directory / "menu_options.png";
     const auto prompt_path = title_directory / "press_prompt.png";
     const auto fallback_title_path = title_directory / "title.png";
 
     Texture plane2;
     Texture plane1;
     Texture prompt;
+    Texture press_a_off;
+    Texture press_a;
+    Texture menu;
     std::vector<Texture> sonic_frames;
+    std::vector<Texture> intro_frames;
+    const auto intro_directory = title_directory / "intro";
+    if (std::filesystem::is_directory(intro_directory)) {
+        for (int index = 0;; ++index) {
+            std::ostringstream filename;
+            filename << "frame_" << std::setw(4) << std::setfill('0') << index << ".png";
+            const auto intro_path = intro_directory / filename.str();
+            if (!std::filesystem::is_regular_file(intro_path)) {
+                break;
+            }
+            Texture intro = load_png(app.renderer, intro_path);
+            if (intro.value == nullptr) {
+                return 1;
+            }
+            intro_frames.push_back(std::move(intro));
+        }
+    }
     if (std::filesystem::is_regular_file(plane2_path) &&
         std::filesystem::is_regular_file(plane1_path)) {
         plane2 = load_png(app.renderer, plane2_path);
         plane1 = load_png(app.renderer, plane1_path);
+        if (std::filesystem::is_regular_file(press_a_off_path)) {
+            press_a_off = load_png(app.renderer, press_a_off_path);
+        }
+        if (std::filesystem::is_regular_file(press_a_path)) {
+            press_a = load_png(app.renderer, press_a_path);
+        }
+        if (std::filesystem::is_regular_file(menu_path)) {
+            menu = load_png(app.renderer, menu_path);
+        }
         if (std::filesystem::is_regular_file(prompt_path)) {
             prompt = load_png(app.renderer, prompt_path);
         }
@@ -2847,15 +2890,24 @@ int run_title_screen(
         }
         return sonic_frames.front().value;
     };
-    if (!render_title_frame(
-            app, plane2.value, plane1.value, title_sonic_texture(frame), prompt.value, true)) {
-        return 1;
+    if (!intro_frames.empty()) {
+        if (!render_title_intro_frame(app, intro_frames.front().value)) {
+            return 1;
+        }
+    } else {
+        if (!render_title_frame(
+                app, plane2.value, plane1.value, title_sonic_texture(frame), prompt.value, true)) {
+            return 1;
+        }
     }
     if (smoke_test) {
         return 0;
     }
 
     bool running = true;
+    bool playing_intro = !intro_frames.empty();
+    bool showing_menu = false;
+    int intro_frame = 0;
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -2868,24 +2920,57 @@ int run_title_screen(
                     key == SDLK_RETURN ||
                     key == SDLK_SPACE ||
                     key == SDLK_Z) {
-                    running = false;
+                    if (playing_intro && key != SDLK_ESCAPE) {
+                        playing_intro = false;
+                        frame = 0;
+                    } else if (!showing_menu && key != SDLK_ESCAPE) {
+                        showing_menu = true;
+                        frame = 0;
+                    } else {
+                        running = false;
+                    }
                 }
             } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
                 if (
                     event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ||
                     event.gbutton.button == SDL_GAMEPAD_BUTTON_START) {
-                    running = false;
+                    if (playing_intro) {
+                        playing_intro = false;
+                        frame = 0;
+                    } else if (!showing_menu) {
+                        showing_menu = true;
+                        frame = 0;
+                    } else {
+                        running = false;
+                    }
                 }
             }
         }
-        const bool prompt_visible = prompt.value == nullptr || ((frame / 10) % 2 == 0);
-        if (!render_title_frame(
-                app,
-                plane2.value,
-                plane1.value,
-                title_sonic_texture(frame),
-                prompt.value,
-                prompt_visible)) {
+        if (playing_intro) {
+            const int clamped_intro_frame =
+                std::min<int>(intro_frame, static_cast<int>(intro_frames.size()) - 1);
+            if (!render_title_intro_frame(app, intro_frames[clamped_intro_frame].value)) {
+                return 1;
+            }
+            ++intro_frame;
+            if (intro_frame >= static_cast<int>(intro_frames.size())) {
+                playing_intro = false;
+                frame = 0;
+            }
+            SDL_Delay(16);
+            continue;
+        }
+        SDL_Texture* overlay = nullptr;
+        if (showing_menu) {
+            overlay = menu.value;
+        } else if (press_a.value != nullptr && ((frame / 10) % 2 == 0)) {
+            overlay = press_a.value;
+        } else if (press_a_off.value != nullptr) {
+            overlay = press_a_off.value;
+        } else if (press_a.value == nullptr) {
+            overlay = prompt.value;
+        }
+        if (!render_title_frame(app, plane2.value, plane1.value, title_sonic_texture(frame), overlay, true)) {
             return 1;
         }
         ++frame;

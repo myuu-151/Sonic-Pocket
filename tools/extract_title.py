@@ -40,6 +40,7 @@ PROMPT_HEIGHT_TILES = 2
 PROMPT_DEST_X = 0
 PROMPT_DEST_Y = 17 * 8
 TITLE_BACKDROP_PALETTE = 0x24F
+TITLE_INTRO_BACKDROP_PALETTE = 0x003
 TITLE_SONIC_X = 0x50
 TITLE_SONIC_Y = 0x4C
 TITLE_FACE_PALETTE = 0x25C
@@ -60,6 +61,61 @@ TITLE_BODY_FRAMES = [
     ("053C_9412.spr", 2),
     ("053B_93B8.spr", 2),
 ]
+TITLE_MENU_PALETTE = 0x25F
+TITLE_MENU_X = 0x28
+TITLE_MENU_NO_CONTINUE_START_Y = 0x85
+TITLE_MENU_GO_TO_ROOM_Y = 0x8F
+TITLE_PRESS_A_X = 0x20
+TITLE_PRESS_A_Y = 0x88
+TITLE_MENU_CURSOR_SPRITE = "0200_2F5E.spr"
+TITLE_PRESS_A_SPRITE = "0532_920E.spr"
+TITLE_MENU_START_SPRITE = "0533_9248.spr"
+TITLE_MENU_CONTINUE_SPRITE = "0534_925E.spr"
+TITLE_MENU_GO_TO_ROOM_SPRITE = "0535_9280.spr"
+INTRO_PARTICLE_FRAMES = [
+    "000B_02D8.spr",
+    "000C_02DE.spr",
+    "000D_02E8.spr",
+    "000E_02F2.spr",
+    "000F_02FC.spr",
+    "0010_0306.spr",
+]
+INTRO_PARTICLE_OBJECTS = [
+    {"x": 0x28, "y": -0x2E, "target_y": -0x2E + 0x50},
+    {"x": 0x52, "y": -0x3F, "target_y": -0x3F + 0x50},
+    {"x": 0x86, "y": -0x3C, "target_y": -0x3C + 0x50},
+]
+INTRO_LOGO_FACE_PALETTE = 0x25C
+INTRO_LOGO_SHADE_PALETTE = 0x25D
+INTRO_LOGO_BODY_PALETTE = 0x25B
+INTRO_LOGO_FACE_SEQUENCE = [
+    ("0719_C45C.spr", 1),
+    ("071A_C462.spr", 3),
+    ("071B_C468.spr", 3),
+    ("071C_C46E.spr", 3),
+    ("071D_C478.spr", 3),
+    ("071E_C48E.spr", 3),
+    ("071F_C4B4.spr", 8),
+    ("0720_C4E2.spr", 4),
+    ("0721_C508.spr", 2),
+]
+INTRO_LOGO_SHADE_SEQUENCE = [
+    ("0713_C3F8.spr", 1),
+    ("0714_C3FE.spr", 3),
+    ("0715_C414.spr", 3),
+    ("0716_C436.spr", 3),
+    ("0717_C440.spr", 3),
+    ("0718_C44E.spr", 3),
+]
+INTRO_LOGO_BODY_SEQUENCE = [
+    ("0722_C52E.spr", 2),
+    ("0723_C538.spr", 3),
+    ("0724_C54A.spr", 3),
+    ("0725_C564.spr", 3),
+    ("0726_C582.spr", 8),
+    ("0727_C5D8.spr", 4),
+    ("0728_C626.spr", 2),
+]
 TITLE_PALETTE_WORDS = [
     0x8250,
     0x8651,
@@ -78,17 +134,47 @@ TITLE_PALETTE_WORDS = [
     0xC24F,
     0xC403,
 ]
+TITLE_ANIM_PALETTE_WORDS = [
+    0x4003,
+    0x4403,
+    0x4803,
+    0x4C03,
+    0x5003,
+    0x5403,
+    0x5A59,
+    0x5E5D,
+    0x625F,
+    0x8003,
+    0x8403,
+    0x8A58,
+    0x8E5A,
+    0x925E,
+    0xC003,
+    0xC403,
+    0x4252,
+    0x4653,
+    0x4A54,
+    0x4E55,
+    0x5256,
+    0x5657,
+    0x8250,
+    0x8651,
+    0xC24F,
+]
 
 
 def title_palette_banks(
     palette_collection: bytes,
+    palette_words: list[int] | None = None,
 ) -> tuple[list[list[tuple[int, int, int]]], list[list[tuple[int, int, int]]], list[int]]:
-    palette_ids = [word & 0x03FF for word in TITLE_PALETTE_WORDS]
+    if palette_words is None:
+        palette_words = TITLE_PALETTE_WORDS
+    palette_ids = [word & 0x03FF for word in palette_words]
     decoded = build_palettes(palette_collection, palette_ids)
     empty = [(0, 0, 0)] * 4
     plane1 = [empty for _ in range(16)]
     plane2 = [empty for _ in range(16)]
-    for word, palette in zip(TITLE_PALETTE_WORDS, decoded):
+    for word, palette in zip(palette_words, decoded):
         slot = (word >> 10) & 0x3F
         slot_index = slot & 0x0F
         bank = slot & 0x30
@@ -115,6 +201,83 @@ def decode_title_tile(tile_data: bytes, tile_id: int) -> tuple[tuple[int, ...], 
     if tile_id >= tile_count:
         raise ValueError(f"title tile {tile_id} outside tile count {tile_count}")
     return decode_tile(tile_data[2:], tile_id)
+
+
+def decode_counted_tiles(tile_data: bytes) -> list[tuple[tuple[int, ...], ...]]:
+    if len(tile_data) < 2:
+        raise ValueError("tile data is missing its count header")
+    tile_count = int.from_bytes(tile_data[:2], "little")
+    payload = tile_data[2:]
+    if len(payload) < tile_count * 16:
+        raise ValueError("tile data is shorter than its count header")
+    return [decode_tile(payload, tile_id) for tile_id in range(tile_count)]
+
+
+def copy_tiles_to_patterns(
+    patterns: list[tuple[tuple[int, ...], ...] | None],
+    tile_data: bytes,
+    base_tile: int,
+) -> None:
+    for index, tile in enumerate(decode_counted_tiles(tile_data)):
+        destination = base_tile + index
+        if destination >= len(patterns):
+            raise ValueError(f"pattern destination {destination} outside table")
+        patterns[destination] = tile
+
+
+def copy_tilemap_to_scroll(
+    scroll: list[int],
+    map_data: bytes,
+    *,
+    destination_bytes: int,
+    width_tiles: int,
+    height_tiles: int,
+) -> None:
+    source_width = map_data[0]
+    entries = unpack_words(map_data[4:])
+    destination = destination_bytes // 2
+    for row in range(height_tiles):
+        for column in range(width_tiles):
+            source_index = row * source_width + column
+            if source_index >= len(entries):
+                raise ValueError("tilemap source is truncated")
+            destination_index = ((destination // 32 + row) & 31) * 32 + (
+                (destination + column) & 31
+            )
+            scroll[destination_index] = entries[source_index]
+
+
+def render_scroll_map(
+    scroll: list[int],
+    patterns: list[tuple[tuple[int, ...], ...] | None],
+    palettes: list[list[tuple[int, int, int]]],
+) -> tuple[bytes, bytes]:
+    image = bytearray(TITLE_WIDTH * TITLE_HEIGHT * 3)
+    mask = bytearray(TITLE_WIDTH * TITLE_HEIGHT)
+    for row in range(TITLE_HEIGHT_TILES):
+        for column in range(TITLE_WIDTH_TILES):
+            entry = scroll[row * 32 + column]
+            tile_id = entry & 0x01FF
+            palette_slot = (entry >> 9) & 0x0F
+            flip_y = (entry & 0x4000) != 0
+            flip_x = (entry & 0x8000) != 0
+            tile = patterns[tile_id]
+            if tile is None:
+                tile = tuple(tuple(0 for _ in range(8)) for _ in range(8))
+            palette = palettes[palette_slot]
+            for y in range(8):
+                source_y = 7 - y if flip_y else y
+                for x in range(8):
+                    source_x = 7 - x if flip_x else x
+                    color_index = tile[source_y][source_x]
+                    if color_index == 0:
+                        continue
+                    destination = ((row * 8 + y) * TITLE_WIDTH + column * 8 + x)
+                    image[destination * 3 : destination * 3 + 3] = bytes(
+                        palette[color_index]
+                    )
+                    mask[destination] = 255
+    return bytes(image), bytes(mask)
 
 
 def render_tilemap(
@@ -243,6 +406,21 @@ def alpha_composite_rgba(bottom: bytes, top: bytes) -> bytes:
     return bytes(output)
 
 
+def rgba_from_rgb(rgb: bytes) -> bytes:
+    rgba = bytearray((len(rgb) // 3) * 4)
+    for pixel in range(len(rgb) // 3):
+        rgba[pixel * 4 : pixel * 4 + 3] = rgb[pixel * 3 : pixel * 3 + 3]
+        rgba[pixel * 4 + 3] = 255
+    return bytes(rgba)
+
+
+def expand_timed_sequence(sequence: list[tuple[str, int]]) -> list[str]:
+    expanded: list[str] = []
+    for name, duration in sequence:
+        expanded.extend([name] * duration)
+    return expanded
+
+
 def render_variant(
     output: Path,
     tile_data: bytes,
@@ -307,7 +485,7 @@ def render_layers(
         height_tiles=TITLE_HEIGHT_TILES,
         skip_header=skip_header,
         palette_shift=palette_shift,
-        transparent_zero=False,
+        transparent_zero=True,
     )
     plane1, plane1_mask = render_tilemap(
         tile_data,
@@ -337,7 +515,17 @@ def render_layers(
     plane2_path = output / "plane2.png"
     plane1_path = output / "plane1.png"
     prompt_path = output / "press_prompt.png"
+    press_off_path = output / "press_a_button_off.png"
+    press_a_path = output / "press_a_button.png"
+    menu_path = output / "menu_options.png"
     prompt_preview_path = output / "title_with_prompt.png"
+    press_preview_path = output / "title_press_a.png"
+    press_off_preview_path = output / "title_press_off.png"
+    menu_preview_path = output / "title_menu.png"
+    states_dir = output / "states"
+    states_dir.mkdir(parents=True, exist_ok=True)
+    for stale_state in states_dir.glob("*.png"):
+        stale_state.unlink()
     sonic_frame_paths: list[str] = []
     write_png(plane2_path, TITLE_WIDTH, TITLE_HEIGHT, plane2_composited)
     write_png_rgba(plane1_path, TITLE_WIDTH, TITLE_HEIGHT, rgba_from_rgb_mask(plane1, plane1_mask))
@@ -351,6 +539,50 @@ def render_layers(
 
     face_palette = build_palettes(palette_collection, [TITLE_FACE_PALETTE])[0]
     body_palette = build_palettes(palette_collection, [TITLE_BODY_PALETTE])[0]
+    menu_palette = build_palettes(palette_collection, [TITLE_MENU_PALETTE])[0]
+    prompt_layer = bytearray(TITLE_WIDTH * TITLE_HEIGHT * 4)
+    for y in range(PROMPT_HEIGHT_TILES * 8):
+        for x in range(PROMPT_WIDTH_TILES * 8):
+            source = y * PROMPT_WIDTH_TILES * 8 + x
+            if prompt_mask[source] == 0:
+                continue
+            dst_x = PROMPT_DEST_X + x
+            dst_y = PROMPT_DEST_Y + y
+            if 0 <= dst_x < TITLE_WIDTH and 0 <= dst_y < TITLE_HEIGHT:
+                src_rgb = source * 3
+                dst_rgba = (dst_y * TITLE_WIDTH + dst_x) * 4
+                prompt_layer[dst_rgba : dst_rgba + 3] = prompt[src_rgb : src_rgb + 3]
+                prompt_layer[dst_rgba + 3] = 255
+    press_a_sprite = render_title_sprite_canvas(
+        sprite_tiles,
+        (sprite_directory / TITLE_PRESS_A_SPRITE).read_bytes(),
+        menu_palette,
+        origin_x=TITLE_PRESS_A_X,
+        origin_y=TITLE_PRESS_A_Y,
+    )
+    press_a = alpha_composite_rgba(bytes(prompt_layer), press_a_sprite)
+    press_off = bytes(prompt_layer)
+    write_png_rgba(press_off_path, TITLE_WIDTH, TITLE_HEIGHT, press_off)
+    write_png_rgba(press_a_path, TITLE_WIDTH, TITLE_HEIGHT, press_a)
+    menu = bytearray(TITLE_WIDTH * TITLE_HEIGHT * 4)
+    for sprite_name, y in (
+        (TITLE_MENU_CURSOR_SPRITE, TITLE_MENU_NO_CONTINUE_START_Y),
+        (TITLE_MENU_START_SPRITE, TITLE_MENU_NO_CONTINUE_START_Y),
+        (TITLE_MENU_GO_TO_ROOM_SPRITE, TITLE_MENU_GO_TO_ROOM_Y),
+    ):
+        menu = bytearray(
+            alpha_composite_rgba(
+                bytes(menu),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    (sprite_directory / sprite_name).read_bytes(),
+                    menu_palette,
+                    origin_x=TITLE_MENU_X,
+                    origin_y=y,
+                ),
+            )
+        )
+    write_png_rgba(menu_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(menu))
     for index, ((face_name, delay), (body_name, body_delay)) in enumerate(
         zip(TITLE_FACE_FRAMES, TITLE_BODY_FRAMES)
     ):
@@ -375,26 +607,13 @@ def render_layers(
         write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, frame)
         sonic_frame_paths.append(str(frame_path))
 
-    preview = bytearray(composite)
-    for y in range(PROMPT_HEIGHT_TILES * 8):
-        for x in range(PROMPT_WIDTH_TILES * 8):
-            source = y * PROMPT_WIDTH_TILES * 8 + x
-            if prompt_mask[source] == 0:
-                continue
-            dst_x = PROMPT_DEST_X + x
-            dst_y = PROMPT_DEST_Y + y
-            if 0 <= dst_x < TITLE_WIDTH and 0 <= dst_y < TITLE_HEIGHT:
-                preview[(dst_y * TITLE_WIDTH + dst_x) * 3 : (dst_y * TITLE_WIDTH + dst_x) * 3 + 3] = (
-                    prompt[source * 3 : source * 3 + 3]
-                )
-    preview_rgba = bytearray(TITLE_WIDTH * TITLE_HEIGHT * 4)
-    for pixel in range(TITLE_WIDTH * TITLE_HEIGHT):
-        preview_rgba[pixel * 4 : pixel * 4 + 3] = preview[pixel * 3 : pixel * 3 + 3]
-        preview_rgba[pixel * 4 + 3] = 255
+    press_preview_rgba = bytearray(alpha_composite_rgba(rgba_from_rgb(composite), press_a))
+    press_off_preview_rgba = bytearray(alpha_composite_rgba(rgba_from_rgb(composite), press_off))
+    menu_preview_rgba = bytearray(alpha_composite_rgba(rgba_from_rgb(composite), bytes(menu)))
     if sonic_frame_paths:
-        preview_rgba = bytearray(
+        press_preview_rgba = bytearray(
             alpha_composite_rgba(
-                bytes(preview_rgba),
+                bytes(press_preview_rgba),
                 render_title_sprite_canvas(
                     sprite_tiles,
                     (sprite_directory / TITLE_BODY_FRAMES[0][0]).read_bytes(),
@@ -404,9 +623,21 @@ def render_layers(
                 ),
             )
         )
-        preview_rgba = bytearray(
+        press_off_preview_rgba = bytearray(
             alpha_composite_rgba(
-                bytes(preview_rgba),
+                bytes(press_off_preview_rgba),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    (sprite_directory / TITLE_BODY_FRAMES[0][0]).read_bytes(),
+                    body_palette,
+                    origin_x=TITLE_SONIC_X,
+                    origin_y=TITLE_SONIC_Y,
+                ),
+            )
+        )
+        press_off_preview_rgba = bytearray(
+            alpha_composite_rgba(
+                bytes(press_off_preview_rgba),
                 render_title_sprite_canvas(
                     sprite_tiles,
                     (sprite_directory / TITLE_FACE_FRAMES[0][0]).read_bytes(),
@@ -416,16 +647,285 @@ def render_layers(
                 ),
             )
         )
-    write_png_rgba(prompt_preview_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(preview_rgba))
+        press_preview_rgba = bytearray(
+            alpha_composite_rgba(
+                bytes(press_preview_rgba),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    (sprite_directory / TITLE_FACE_FRAMES[0][0]).read_bytes(),
+                    face_palette,
+                    origin_x=TITLE_SONIC_X,
+                    origin_y=TITLE_SONIC_Y,
+                ),
+            )
+        )
+        menu_preview_rgba = bytearray(
+            alpha_composite_rgba(
+                bytes(menu_preview_rgba),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    (sprite_directory / TITLE_BODY_FRAMES[0][0]).read_bytes(),
+                    body_palette,
+                    origin_x=TITLE_SONIC_X,
+                    origin_y=TITLE_SONIC_Y,
+                ),
+            )
+        )
+        menu_preview_rgba = bytearray(
+            alpha_composite_rgba(
+                bytes(menu_preview_rgba),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    (sprite_directory / TITLE_FACE_FRAMES[0][0]).read_bytes(),
+                    face_palette,
+                    origin_x=TITLE_SONIC_X,
+                    origin_y=TITLE_SONIC_Y,
+                ),
+            )
+        )
+    write_png_rgba(press_preview_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(press_preview_rgba))
+    write_png_rgba(press_off_preview_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(press_off_preview_rgba))
+    write_png_rgba(menu_preview_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(menu_preview_rgba))
+    write_png_rgba(prompt_preview_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(menu_preview_rgba))
+    state_press_off_path = states_dir / "frame_0000_press_off.png"
+    state_press_path = states_dir / "frame_0001_press_a.png"
+    state_menu_path = states_dir / "frame_0002_menu.png"
+    write_png_rgba(state_press_off_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(press_off_preview_rgba))
+    write_png_rgba(state_press_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(press_preview_rgba))
+    write_png_rgba(state_menu_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(menu_preview_rgba))
 
     return {
         "title": str(title_path),
         "plane2": str(plane2_path),
         "plane1": str(plane1_path),
         "press_prompt": str(prompt_path),
+        "press_a_button_off": str(press_off_path),
+        "press_a_button": str(press_a_path),
+        "menu_options": str(menu_path),
         "title_with_prompt": str(prompt_preview_path),
+        "title_press_a": str(press_preview_path),
+        "title_press_off": str(press_off_preview_path),
+        "title_menu": str(menu_preview_path),
+        "state_frames": [str(state_press_off_path), str(state_press_path), str(state_menu_path)],
         "sonic_frames": sonic_frame_paths,
     }
+
+
+def render_intro_frames(
+    output: Path,
+    sprite_directory: Path,
+    art_directory: Path,
+    sprite_tiles: bytes,
+    palette_collection: bytes,
+    plane1_palettes: list[list[tuple[int, int, int]]],
+    plane2_palettes: list[list[tuple[int, int, int]]],
+    background: tuple[int, int, int],
+) -> list[str]:
+    intro_dir = output / "intro"
+    intro_dir.mkdir(parents=True, exist_ok=True)
+
+    intro_background = background_color(palette_collection, TITLE_INTRO_BACKDROP_PALETTE)
+    particle_palette = build_palettes(palette_collection, [0x01B])[0]
+    logo_face_palette = build_palettes(palette_collection, [INTRO_LOGO_FACE_PALETTE])[0]
+    logo_shade_palette = build_palettes(palette_collection, [INTRO_LOGO_SHADE_PALETTE])[0]
+    logo_body_palette = build_palettes(palette_collection, [INTRO_LOGO_BODY_PALETTE])[0]
+    face_sequence = expand_timed_sequence(INTRO_LOGO_FACE_SEQUENCE)
+    shade_sequence = expand_timed_sequence(INTRO_LOGO_SHADE_SEQUENCE)
+    body_sequence = expand_timed_sequence(INTRO_LOGO_BODY_SEQUENCE)
+
+    patterns: list[tuple[tuple[int, ...], ...] | None] = [None] * 512
+    scroll1 = [0] * (32 * 32)
+    scroll2 = [0] * (32 * 32)
+    copy_tiles_to_patterns(patterns, (art_directory / "data_08A3FA.til").read_bytes(), 0)
+    copy_tilemap_to_scroll(
+        scroll1,
+        (art_directory / "data_08EC58.map").read_bytes(),
+        destination_bytes=0,
+        width_tiles=20,
+        height_tiles=19,
+    )
+    copy_tilemap_to_scroll(
+        scroll2,
+        (art_directory / "data_08E95C.map").read_bytes(),
+        destination_bytes=0,
+        width_tiles=20,
+        height_tiles=19,
+    )
+    copy_tiles_to_patterns(patterns, (art_directory / "data_08D75A.til").read_bytes(), 0x83)
+
+    plane1_patch_maps = [
+        "data_08FAD4.map",
+        "data_08FE4C.map",
+        "data_0901C4.map",
+        "data_09053C.map",
+        "data_0908B4.map",
+        "data_090D6C.map",
+    ]
+    plane2_patch_maps = [
+        "data_08F918.map",
+        "data_08FC90.map",
+        "data_090008.map",
+        "data_090380.map",
+        "data_0906F8.map",
+        "data_090A70.map",
+    ]
+    logo_tile_patches = [
+        ("data_08AC2C.til", 0),
+        ("data_08AEBE.til", 0x32),
+        ("data_08B1A0.til", 0),
+        ("data_08B462.til", 0x32),
+        ("data_08B704.til", 0),
+        ("data_08BA06.til", 0x32),
+    ]
+    logo_map_patches = [
+        "data_08EF54.map",
+        "data_08EFE8.map",
+        "data_08F07C.map",
+        "data_08F110.map",
+        "data_08F1A4.map",
+        "data_08F238.map",
+    ]
+
+    rendered: list[str] = []
+    frame_index = 0
+    reveal_patch_index = 0
+    logo_patch_index = 0
+    logo_started_at: int | None = None
+    logo_body_started_at: int | None = None
+    camera_scroll_frames = 80
+    pre_reveal_wait_frames = 0x1E
+    reveal_patch_start = camera_scroll_frames + pre_reveal_wait_frames
+    logo_start = reveal_patch_start + len(plane1_patch_maps)
+    logo_patch_interval = 3
+    logo_end = logo_start + len(logo_map_patches) * logo_patch_interval + 2
+    max_frames = logo_end
+    for frame in range(max_frames):
+        if reveal_patch_start <= frame < logo_start and reveal_patch_index < len(plane1_patch_maps):
+            destination_bytes = 0 if reveal_patch_index == 5 else 0x200
+            patch_height = 19 if reveal_patch_index == 5 else 11
+            copy_tilemap_to_scroll(
+                scroll1,
+                (art_directory / plane1_patch_maps[reveal_patch_index]).read_bytes(),
+                destination_bytes=destination_bytes,
+                width_tiles=20,
+                height_tiles=patch_height,
+            )
+            copy_tilemap_to_scroll(
+                scroll2,
+                (art_directory / plane2_patch_maps[reveal_patch_index]).read_bytes(),
+                destination_bytes=destination_bytes,
+                width_tiles=20,
+                height_tiles=patch_height,
+            )
+            reveal_patch_index += 1
+        if frame == logo_start:
+            copy_tiles_to_patterns(
+                patterns,
+                (art_directory / logo_tile_patches[0][0]).read_bytes(),
+                logo_tile_patches[0][1],
+            )
+            copy_tilemap_to_scroll(
+                scroll1,
+                (art_directory / logo_map_patches[0]).read_bytes(),
+                destination_bytes=0x0A,
+                width_tiles=9,
+                height_tiles=8,
+            )
+            logo_started_at = frame
+            logo_patch_index = 1
+        elif (
+            logo_started_at is not None
+            and logo_patch_index < len(logo_map_patches)
+            and (frame - logo_started_at) % logo_patch_interval == 0
+        ):
+            copy_tiles_to_patterns(
+                patterns,
+                (art_directory / logo_tile_patches[logo_patch_index][0]).read_bytes(),
+                logo_tile_patches[logo_patch_index][1],
+            )
+            copy_tilemap_to_scroll(
+                scroll1,
+                (art_directory / logo_map_patches[logo_patch_index]).read_bytes(),
+                destination_bytes=0x0A,
+                width_tiles=9,
+                height_tiles=8,
+            )
+            if logo_patch_index == 2:
+                logo_body_started_at = frame
+            logo_patch_index += 1
+
+        plane2, plane2_mask = render_scroll_map(scroll2, patterns, plane2_palettes)
+        plane1, plane1_mask = render_scroll_map(scroll1, patterns, plane1_palettes)
+        rgb = composite_rgb(
+            composite_rgb(solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, intro_background), plane2, plane2_mask),
+            plane1,
+            plane1_mask,
+        )
+        rgba = rgba_from_rgb(rgb)
+
+        if frame < reveal_patch_start:
+            for obj_index, obj in enumerate(INTRO_PARTICLE_OBJECTS):
+                y = min(obj["target_y"], obj["y"] + frame)
+                particle_name = INTRO_PARTICLE_FRAMES[
+                    (frame // 2 + obj_index) % len(INTRO_PARTICLE_FRAMES)
+                ]
+                rgba = alpha_composite_rgba(
+                    rgba,
+                    render_title_sprite_canvas(
+                        sprite_tiles,
+                        (sprite_directory / particle_name).read_bytes(),
+                        particle_palette,
+                        origin_x=obj["x"],
+                        origin_y=y,
+                    ),
+                )
+
+        if logo_started_at is not None:
+            logo_frame = frame - logo_started_at
+            if 0 <= logo_frame < len(shade_sequence):
+                rgba = alpha_composite_rgba(
+                    rgba,
+                    render_title_sprite_canvas(
+                        sprite_tiles,
+                        (sprite_directory / shade_sequence[logo_frame]).read_bytes(),
+                        logo_shade_palette,
+                        origin_x=TITLE_SONIC_X,
+                        origin_y=TITLE_SONIC_Y,
+                    ),
+                )
+            if 0 <= logo_frame < len(face_sequence):
+                rgba = alpha_composite_rgba(
+                    rgba,
+                    render_title_sprite_canvas(
+                        sprite_tiles,
+                        (sprite_directory / face_sequence[logo_frame]).read_bytes(),
+                        logo_face_palette,
+                        origin_x=TITLE_SONIC_X,
+                        origin_y=TITLE_SONIC_Y,
+                    ),
+                )
+            if logo_body_started_at is not None:
+                body_frame = frame - logo_body_started_at
+            else:
+                body_frame = -1
+            if 0 <= body_frame < len(body_sequence):
+                rgba = alpha_composite_rgba(
+                    rgba,
+                    render_title_sprite_canvas(
+                        sprite_tiles,
+                        (sprite_directory / body_sequence[body_frame]).read_bytes(),
+                        logo_body_palette,
+                        origin_x=TITLE_SONIC_X,
+                        origin_y=TITLE_SONIC_Y,
+                    ),
+                )
+
+        frame_path = intro_dir / f"frame_{frame_index:04d}.png"
+        write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
+        rendered.append(str(frame_path))
+        frame_index += 1
+
+    return rendered
 
 
 def main() -> int:
@@ -457,6 +957,9 @@ def main() -> int:
     # SetPaletteList stores the lower 10 bits as the palette collection ID.
     # The upper bits select the plane-palette object slot.
     plane1_palettes, plane2_palettes, palette_ids = title_palette_banks(palette_collection)
+    anim_plane1_palettes, anim_plane2_palettes, anim_palette_ids = title_palette_banks(
+        palette_collection, TITLE_ANIM_PALETTE_WORDS
+    )
     background = background_color(palette_collection, TITLE_BACKDROP_PALETTE)
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -473,11 +976,21 @@ def main() -> int:
         prompt_map,
         sprite_directory,
         palette_collection,
-        plane1_palettes,
-        plane2_palettes,
+        anim_plane1_palettes,
+        anim_plane2_palettes,
         background,
         skip_header=4,
         palette_shift=9,
+    )
+    intro_frames = render_intro_frames(
+        args.output,
+        sprite_directory,
+        art,
+        sprite_tiles,
+        palette_collection,
+        anim_plane1_palettes,
+        anim_plane2_palettes,
+        background,
     )
 
     rendered = [
@@ -514,10 +1027,12 @@ def main() -> int:
             "sonic_sprites": "Spr_0536..Spr_053D / sprites/*.spr",
             "palette_words": [f"0x{word:04X}" for word in TITLE_PALETTE_WORDS],
             "palette_ids": palette_ids,
+            "animation_palette_ids": anim_palette_ids,
             "background_palette": f"0x{TITLE_BACKDROP_PALETTE:03X}",
         },
         "layers": {
             **layer_paths,
+            "intro_frames": intro_frames,
             "press_prompt_destination": {"x": PROMPT_DEST_X, "y": PROMPT_DEST_Y},
             "press_prompt_blink_frames": 10,
         },
