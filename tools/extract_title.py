@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -161,6 +162,14 @@ TITLE_ANIM_PALETTE_WORDS = [
     0x8651,
     0xC24F,
 ]
+TITLE_TRACE_HANDOFF_START = 593
+TITLE_TRACE_HANDOFF_COUNT = 36
+TITLE_TRACE_OBJECT_PALETTES = {
+    0: TITLE_FACE_PALETTE,
+    1: INTRO_LOGO_SHADE_PALETTE,
+    2: TITLE_BODY_PALETTE,
+    3: TITLE_MENU_PALETTE,
+}
 
 
 def title_palette_banks(
@@ -405,6 +414,66 @@ def render_title_sprite_canvas(
         draw_tile(tile_word, signed_x, signed_y)
         tiles_read += 1
         offset += 4
+    return bytes(canvas)
+
+
+def trace_sprite_entries(trace_path: Path, start: int, count: int) -> dict[int, str]:
+    if not trace_path.is_file():
+        return {}
+    rows: dict[int, str] = {}
+    with trace_path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            trace_frame = int(row["trace_frame"])
+            if start <= trace_frame < start + count:
+                rows[trace_frame - start] = row["active_objects"]
+    return rows
+
+
+def render_trace_object_canvas(
+    sprite_tiles: bytes,
+    palette_collection: bytes,
+    sprite_directory: Path,
+    active_objects: str,
+) -> bytes:
+    palettes = {
+        slot: build_palettes(palette_collection, [palette_id])[0]
+        for slot, palette_id in TITLE_TRACE_OBJECT_PALETTES.items()
+    }
+    sprite_files = {
+        path.stem.split("_", 1)[1].upper(): path
+        for path in sprite_directory.glob("*.spr")
+        if "_" in path.stem
+    }
+    canvas = bytearray(TITLE_WIDTH * TITLE_HEIGHT * 4)
+    if not active_objects:
+        return bytes(canvas)
+    for entry in active_objects.split(";"):
+        if not entry:
+            continue
+        parts = entry.split(":")
+        if len(parts) != 7 or parts[0].startswith(("bad", "loop")):
+            continue
+        x = int(parts[3], 10)
+        y = int(parts[4], 10)
+        sprite_key = parts[5].upper()
+        flags_palette = int(parts[6], 16)
+        palette_slot = (flags_palette >> 8) & 0x03
+        palette = palettes.get(palette_slot)
+        sprite_path = sprite_files.get(sprite_key)
+        if palette is None or sprite_path is None:
+            continue
+        canvas = bytearray(
+            alpha_composite_rgba(
+                bytes(canvas),
+                render_title_sprite_canvas(
+                    sprite_tiles,
+                    sprite_path.read_bytes(),
+                    palette,
+                    origin_x=x,
+                    origin_y=y,
+                ),
+            )
+        )
     return bytes(canvas)
 
 
@@ -769,6 +838,7 @@ def render_intro_frames(
     plane1_palettes: list[list[tuple[int, int, int]]],
     plane2_palettes: list[list[tuple[int, int, int]]],
     background: tuple[int, int, int],
+    title_trace: Path | None = None,
 ) -> list[str]:
     intro_dir = output / "intro"
     handoff_dir = output / "handoff"
@@ -784,6 +854,15 @@ def render_intro_frames(
     handoff_marker = handoff_dir / "teacher_capture.txt"
     if handoff_marker.exists():
         handoff_marker.unlink()
+    trace_marker = output.parent / "title-object-trace-latest.txt"
+    trace_path = title_trace or (
+        Path(trace_marker.read_text(encoding="utf-8").strip().replace("\\", "/"))
+        if trace_marker.is_file()
+        else Path()
+    )
+    traced_handoff_sprites = trace_sprite_entries(
+        trace_path, TITLE_TRACE_HANDOFF_START, TITLE_TRACE_HANDOFF_COUNT
+    )
 
     intro_background = background_color(palette_collection, TITLE_INTRO_BACKDROP_PALETTE)
     particle_palette = build_palettes(palette_collection, [0x01B])[0]
@@ -863,7 +942,8 @@ def render_intro_frames(
     # loop, avoiding a visible snap from the intro Sonic pose to the idle title
     # Sonic pose.
     intro_frame_limit = logo_start + 13
-    max_frames = logo_start + 20
+    handoff_frame_count = TITLE_TRACE_HANDOFF_COUNT if traced_handoff_sprites else 7
+    max_frames = intro_frame_limit + handoff_frame_count
     for frame in range(max_frames):
         if reveal_patch_start <= frame < logo_start and reveal_patch_index < len(plane1_patch_maps):
             destination_bytes = 0 if reveal_patch_index == 5 else 0x200
@@ -950,7 +1030,9 @@ def render_intro_frames(
                     ),
                 )
 
-        if logo_started_at is not None:
+        handoff_index = frame - intro_frame_limit
+        use_traced_handoff = handoff_index >= 0 and handoff_index in traced_handoff_sprites
+        if logo_started_at is not None and not use_traced_handoff:
             logo_frame = frame - logo_started_at
             if logo_body_started_at is not None:
                 body_frame = frame - logo_body_started_at
@@ -995,7 +1077,16 @@ def render_intro_frames(
             write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
             rendered.append(str(frame_path))
         else:
-            handoff_index = frame - intro_frame_limit
+            if use_traced_handoff:
+                rgba = alpha_composite_rgba(
+                    rgba,
+                    render_trace_object_canvas(
+                        sprite_tiles,
+                        palette_collection,
+                        sprite_directory,
+                        traced_handoff_sprites[handoff_index],
+                    ),
+                )
             frame_path = handoff_dir / f"frame_{handoff_index:04d}.png"
             write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
         frame_index += 1
@@ -1009,7 +1100,17 @@ def main() -> int:
     parser.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE)
     parser.add_argument("--output", type=Path, default=Path("out/title"))
     parser.add_argument("--all-variants", action="store_true")
+    parser.add_argument(
+        "--title-trace",
+        type=Path,
+        default=None,
+        help="BizHawk title object trace CSV used to render ROM-expanded handoff sprites",
+    )
     args = parser.parse_args()
+    args.output = Path(str(args.output).replace("\\", "/"))
+    args.reference = Path(str(args.reference).replace("\\", "/"))
+    if args.title_trace is not None:
+        args.title_trace = Path(str(args.title_trace).replace("\\", "/"))
 
     rom_path = args.rom or rominfo.discover_rom(rominfo.DEFAULT_ROM_DIRECTORY)
     rom = rom_path.read_bytes()
@@ -1066,6 +1167,7 @@ def main() -> int:
         anim_plane1_palettes,
         anim_plane2_palettes,
         background,
+        args.title_trace,
     )
     handoff_frames = [str(path) for path in sorted((args.output / "handoff").glob("frame_*.png"))]
 
