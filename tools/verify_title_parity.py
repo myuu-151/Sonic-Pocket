@@ -31,8 +31,8 @@ DEFAULT_NATIVE_INTRO_START = 336
 
 WAIT_ON_TEACHER_FRAMES = (1327, 1349, 1365, 1401, 1365, 1349)
 WAIT_OFF_TEACHER_FRAMES = (1385, 1329, 1333, 1337, 1333, 1329)
-HANDOFF_TEACHER_FRAMES = tuple(range(593, 629))
 NATIVE_INTRO_SAMPLES = (0, 22, 32, 42, 52, 62, 72, 82, 90, 102, 110, 116, 119, 128)
+NATIVE_HANDOFF_FRAME_COUNT = 7
 
 
 def latest_teacher(root: Path) -> Path:
@@ -120,10 +120,16 @@ def main() -> int:
         raise SystemExit(f"teacher capture does not exist: {teacher}")
 
     intro_marker = args.title_root / "intro" / "teacher_capture.txt"
+    handoff_marker = args.title_root / "handoff" / "teacher_capture.txt"
     intro_is_teacher_capture = intro_marker.is_file()
     if args.require_native and intro_is_teacher_capture:
         raise SystemExit(
             f"title intro is screenshot-backed ({intro_marker}); run tools/extract_title.py "
+            "to regenerate ROM-derived native frames"
+        )
+    if args.require_native and handoff_marker.is_file():
+        raise SystemExit(
+            f"title handoff is screenshot-backed ({handoff_marker}); run tools/extract_title.py "
             "to regenerate ROM-derived native frames"
         )
 
@@ -159,13 +165,13 @@ def main() -> int:
             )
         )
 
-    for index, teacher_frame in enumerate(HANDOFF_TEACHER_FRAMES):
-        checks.append(
-            (
-                teacher / f"frame_{teacher_frame:05d}.png",
-                args.title_root / "handoff" / f"frame_{index:04d}.png",
+    if not intro_is_teacher_capture:
+        handoff_frames = sorted((args.title_root / "handoff").glob("frame_*.png"))
+        if len(handoff_frames) != NATIVE_HANDOFF_FRAME_COUNT:
+            raise SystemExit(
+                f"expected {NATIVE_HANDOFF_FRAME_COUNT} native handoff frame(s), "
+                f"found {len(handoff_frames)} in {args.title_root / 'handoff'}"
             )
-        )
 
     for index, teacher_frame in enumerate(WAIT_ON_TEACHER_FRAMES):
         checks.append(

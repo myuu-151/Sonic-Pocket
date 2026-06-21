@@ -537,17 +537,22 @@ def render_layers(
     menu_preview_path = output / "title_menu.png"
     wait_on_dir = output / "wait_on"
     wait_off_dir = output / "wait_off"
+    handoff_dir = output / "handoff"
     states_dir = output / "states"
     states_dir.mkdir(parents=True, exist_ok=True)
+    handoff_dir.mkdir(parents=True, exist_ok=True)
     wait_on_dir.mkdir(parents=True, exist_ok=True)
     wait_off_dir.mkdir(parents=True, exist_ok=True)
     for stale_state in states_dir.glob("*.png"):
         stale_state.unlink()
+    for stale_handoff in handoff_dir.glob("frame_*.png"):
+        stale_handoff.unlink()
     for stale_wait in wait_on_dir.glob("*.png"):
         stale_wait.unlink()
     for stale_wait in wait_off_dir.glob("*.png"):
         stale_wait.unlink()
     for stale_marker in (
+        handoff_dir / "teacher_capture.txt",
         wait_on_dir / "teacher_capture.txt",
         wait_off_dir / "teacher_capture.txt",
     ):
@@ -748,6 +753,7 @@ def render_layers(
         "title_press_off": str(press_off_preview_path),
         "title_menu": str(menu_preview_path),
         "state_frames": [str(state_press_off_path), str(state_press_path), str(state_menu_path)],
+        "handoff_frames": [],
         "wait_on_frames": wait_on_paths,
         "wait_off_frames": wait_off_paths,
         "sonic_frames": sonic_frame_paths,
@@ -765,12 +771,19 @@ def render_intro_frames(
     background: tuple[int, int, int],
 ) -> list[str]:
     intro_dir = output / "intro"
+    handoff_dir = output / "handoff"
     intro_dir.mkdir(parents=True, exist_ok=True)
+    handoff_dir.mkdir(parents=True, exist_ok=True)
     for stale_frame in intro_dir.glob("frame_*.png"):
+        stale_frame.unlink()
+    for stale_frame in handoff_dir.glob("frame_*.png"):
         stale_frame.unlink()
     teacher_marker = intro_dir / "teacher_capture.txt"
     if teacher_marker.exists():
         teacher_marker.unlink()
+    handoff_marker = handoff_dir / "teacher_capture.txt"
+    if handoff_marker.exists():
+        handoff_marker.unlink()
 
     intro_background = background_color(palette_collection, TITLE_INTRO_BACKDROP_PALETTE)
     particle_palette = build_palettes(palette_collection, [0x01B])[0]
@@ -845,10 +858,12 @@ def render_intro_frames(
     reveal_patch_start = camera_scroll_frames + pre_reveal_wait_frames
     logo_start = reveal_patch_start + len(plane1_patch_maps)
     logo_patch_interval = 3
-    # Stop at the last frame that still belongs to the intro tilemap/script
-    # composition. The ROM then switches to the final title tilemaps and starts
-    # the normal title wait loop on the prompt-off phase.
-    max_frames = logo_start + 13
+    # Keep the last few native title-logo object frames as a separate handoff
+    # sequence. The viewer plays them after the intro and before the title wait
+    # loop, avoiding a visible snap from the intro Sonic pose to the idle title
+    # Sonic pose.
+    intro_frame_limit = logo_start + 13
+    max_frames = logo_start + 20
     for frame in range(max_frames):
         if reveal_patch_start <= frame < logo_start and reveal_patch_index < len(plane1_patch_maps):
             destination_bytes = 0 if reveal_patch_index == 5 else 0x200
@@ -975,9 +990,14 @@ def render_intro_frames(
                     ),
                 )
 
-        frame_path = intro_dir / f"frame_{frame_index:04d}.png"
-        write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
-        rendered.append(str(frame_path))
+        if frame < intro_frame_limit:
+            frame_path = intro_dir / f"frame_{frame_index:04d}.png"
+            write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
+            rendered.append(str(frame_path))
+        else:
+            handoff_index = frame - intro_frame_limit
+            frame_path = handoff_dir / f"frame_{handoff_index:04d}.png"
+            write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
         frame_index += 1
 
     return rendered
@@ -1047,6 +1067,7 @@ def main() -> int:
         anim_plane2_palettes,
         background,
     )
+    handoff_frames = [str(path) for path in sorted((args.output / "handoff").glob("frame_*.png"))]
 
     rendered = [
         str(render_variant(
@@ -1088,6 +1109,7 @@ def main() -> int:
         "layers": {
             **layer_paths,
             "intro_frames": intro_frames,
+            "handoff_frames": handoff_frames,
             "press_prompt_destination": {"x": PROMPT_DEST_X, "y": PROMPT_DEST_Y},
             "press_prompt_blink_frames": 10,
         },
