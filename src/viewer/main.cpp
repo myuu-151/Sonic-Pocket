@@ -3037,6 +3037,11 @@ int run_title_screen(
             if (intro_is_teacher_capture) {
                 if (intro_frame + 1 < static_cast<int>(intro_frames.size())) {
                     ++intro_frame;
+                } else {
+                    playing_intro = false;
+                    playing_handoff = false;
+                    frame = 0;
+                    title_logic_tick = 0;
                 }
             } else {
                 ++title_logic_tick;
