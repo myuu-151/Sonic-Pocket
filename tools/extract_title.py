@@ -547,6 +547,12 @@ def render_layers(
         stale_wait.unlink()
     for stale_wait in wait_off_dir.glob("*.png"):
         stale_wait.unlink()
+    for stale_marker in (
+        wait_on_dir / "teacher_capture.txt",
+        wait_off_dir / "teacher_capture.txt",
+    ):
+        if stale_marker.exists():
+            stale_marker.unlink()
     sonic_frame_paths: list[str] = []
     sonic_frame_rgba: list[bytes] = []
     write_png(plane2_path, TITLE_WIDTH, TITLE_HEIGHT, plane2_composited)
