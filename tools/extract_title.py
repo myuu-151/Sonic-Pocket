@@ -164,6 +164,9 @@ TITLE_ANIM_PALETTE_WORDS = [
 ]
 TITLE_TRACE_HANDOFF_START = 593
 TITLE_TRACE_HANDOFF_COUNT = 36
+TITLE_TRACE_BLACK_START = 6
+TITLE_TRACE_FINAL_BLACK_START = 8
+TITLE_TRACE_FINAL_BLUE_START = 35
 TITLE_TRACE_OBJECT_PALETTES = {
     0: TITLE_FACE_PALETTE,
     1: INTRO_LOGO_SHADE_PALETTE,
@@ -494,6 +497,15 @@ def rgba_from_rgb(rgb: bytes) -> bytes:
         rgba[pixel * 4 : pixel * 4 + 3] = rgb[pixel * 3 : pixel * 3 + 3]
         rgba[pixel * 4 + 3] = 255
     return bytes(rgba)
+
+
+def scale_rgb(rgb: bytes, numerator: int, denominator: int) -> bytes:
+    if denominator <= 0:
+        raise ValueError("scale denominator must be positive")
+    output = bytearray(len(rgb))
+    for index, value in enumerate(rgb):
+        output[index] = max(0, min(255, value * numerator // denominator))
+    return bytes(output)
 
 
 def expand_timed_sequence(sequence: list[tuple[str, int]]) -> list[str]:
@@ -863,6 +875,63 @@ def render_intro_frames(
     traced_handoff_sprites = trace_sprite_entries(
         trace_path, TITLE_TRACE_HANDOFF_START, TITLE_TRACE_HANDOFF_COUNT
     )
+    title_tile_data = (art_directory / "data_08BD98.til").read_bytes()
+    title_map1 = (art_directory / "data_08F5C8.map").read_bytes()
+    title_map2 = (art_directory / "data_08F2CC.map").read_bytes()
+    title_plane2, title_plane2_mask = render_tilemap(
+        title_tile_data,
+        title_map2,
+        plane2_palettes,
+        width_tiles=TITLE_WIDTH_TILES,
+        height_tiles=TITLE_HEIGHT_TILES,
+        skip_header=4,
+        palette_shift=9,
+        transparent_zero=True,
+    )
+    title_plane1, title_plane1_mask = render_tilemap(
+        title_tile_data,
+        title_map1,
+        plane1_palettes,
+        width_tiles=TITLE_WIDTH_TILES,
+        height_tiles=TITLE_HEIGHT_TILES,
+        skip_header=4,
+        palette_shift=9,
+        transparent_zero=True,
+    )
+    final_title_black = rgba_from_rgb(
+        composite_rgb(
+            composite_rgb(solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, (0, 0, 0)), title_plane2, title_plane2_mask),
+            title_plane1,
+            title_plane1_mask,
+        )
+    )
+    final_title_blue = rgba_from_rgb(
+        composite_rgb(
+            composite_rgb(solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, background), title_plane2, title_plane2_mask),
+            title_plane1,
+            title_plane1_mask,
+        )
+    )
+    faded_final_title_bases: dict[int, bytes] = {}
+    fade_denominator = max(1, TITLE_TRACE_FINAL_BLUE_START - TITLE_TRACE_FINAL_BLACK_START)
+    for fade_index in range(TITLE_TRACE_FINAL_BLACK_START, TITLE_TRACE_FINAL_BLUE_START):
+        # LoadFadePalList fades the final title scroll palettes in while the
+        # logo/title plane is already visible. Approximate that by ramping the
+        # backdrop/plane-2 layer and compositing the title/logo plane at full
+        # strength, which matches the visible ROM transition much more closely
+        # than drawing the final title at full brightness immediately.
+        numerator = max(0, fade_index - TITLE_TRACE_FINAL_BLACK_START)
+        faded_backdrop = scale_rgb(
+            solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, background), numerator, fade_denominator
+        )
+        faded_plane2 = scale_rgb(title_plane2, numerator, fade_denominator)
+        faded_final_title_bases[fade_index] = rgba_from_rgb(
+            composite_rgb(
+                composite_rgb(faded_backdrop, faded_plane2, title_plane2_mask),
+                title_plane1,
+                title_plane1_mask,
+            )
+        )
 
     intro_background = background_color(palette_collection, TITLE_INTRO_BACKDROP_PALETTE)
     particle_palette = build_palettes(palette_collection, [0x01B])[0]
@@ -1077,7 +1146,15 @@ def render_intro_frames(
             write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, rgba)
             rendered.append(str(frame_path))
         else:
-            if use_traced_handoff:
+            if use_traced_handoff and TITLE_TRACE_BLACK_START <= handoff_index < TITLE_TRACE_FINAL_BLACK_START:
+                rgba = rgba_from_rgb(solid_rgb(TITLE_WIDTH, TITLE_HEIGHT, (0, 0, 0)))
+            elif use_traced_handoff and handoff_index >= TITLE_TRACE_FINAL_BLUE_START:
+                rgba = final_title_blue
+            elif use_traced_handoff and handoff_index >= TITLE_TRACE_FINAL_BLACK_START:
+                rgba = faded_final_title_bases.get(handoff_index, final_title_black)
+            if use_traced_handoff and not (
+                TITLE_TRACE_BLACK_START <= handoff_index < TITLE_TRACE_FINAL_BLACK_START
+            ):
                 rgba = alpha_composite_rgba(
                     rgba,
                     render_trace_object_canvas(
