@@ -44,7 +44,6 @@ constexpr int kGroundFriction = 0x20;
 constexpr int kGroundMaxSpeed = 0x800;
 constexpr int kGroundSlopeMaxSpeed = 0xC00;
 constexpr int kGroundSkidDeceleration = 0x120;
-constexpr int kGroundStopThreshold = 0xE0;
 constexpr int kSlopeGravity = 0x2D;
 constexpr int kDownhillSlopeGravity = 0x30;
 constexpr int kSlopeProbeRadius = 7;
@@ -202,6 +201,7 @@ struct Player {
     bool pending_jump = false;
     bool jump_release_limited = false;
     bool walking_active = false;
+    bool stop_pending = false;
     bool pending_standing_hbox = false;
     int leave_ground_rotation_delay = 0;
     int movement_input = 0;
@@ -2434,6 +2434,15 @@ void update_player(Player& player, const CollisionMask& collision,
     player.input_up = input_up;
     player.input_down = input_down;
 
+    if (player.grounded && player.stop_pending) {
+        player.velocity_x = 0;
+        player.velocity_y = 0;
+        player.ground_speed = 0;
+        player.walking_active = false;
+        player.stop_pending = false;
+        return;
+    }
+
     bool started_jump_this_tick = false;
     if (player.pending_jump && player.grounded) {
         player.pending_jump = false;
@@ -2476,12 +2485,12 @@ void update_player(Player& player, const CollisionMask& collision,
         }
         rom_sub_399c88_apply_slope_force(player);
         rom_sub_399443(player, movement);
-        if (ground_speed_magnitude(player) < kGroundStopThreshold &&
-            movement == 0) {
-            player.ground_speed = 0;
+        rom_plr_calc_xy_speed(player);
+        const int ground_speed_abs = ground_speed_magnitude(player);
+        if (ground_speed_abs > 0 && ground_speed_abs < 0x100 && movement == 0) {
+            player.stop_pending = true;
             player.walking_active = false;
         }
-        rom_plr_calc_xy_speed(player);
         if (player.skid_ticks > 0) {
             --player.skid_ticks;
         }
@@ -3120,6 +3129,7 @@ void load_player_from_trace_row(
         trace_field(header, row, "collision_plane", player.collision_plane);
     player.ground_angle = trace_field(header, row, "surface_angle") & 0xFF;
     player.grounded = trace_field(header, row, "state") != 0x0039AAF7;
+    player.stop_pending = trace_field(header, row, "state") == 0x003999F7;
     player.facing_left =
         (trace_field(header, row, "movement_flags") & 0x80) != 0;
     player.walking_active = player.grounded && player.ground_speed != 0;
@@ -3241,6 +3251,7 @@ int replay_trace(
     player.velocity_y = -trace_field(header, first, "y_velocity_s8_8");
     player.ground_angle = trace_field(header, first, "surface_angle") & 0xFF;
     player.grounded = trace_field(header, first, "state") != 0x0039AAF7;
+    player.stop_pending = trace_field(header, first, "state") == 0x003999F7;
     player.facing_left = (trace_field(header, first, "movement_flags") & 0x80) != 0;
     player.walking_active = player.ground_speed != 0;
 

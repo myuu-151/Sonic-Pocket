@@ -172,8 +172,8 @@ def main() -> int:
     parser.add_argument(
         "--max-teacher-numeric-bad",
         type=int,
-        default=3,
-        help="current baseline: one isolated stop-threshold tick creates dx/g/vx deltas",
+        default=0,
+        help="fail if any teacher-forced numeric movement field diverges",
     )
     parser.add_argument("--max-teacher-y-bad", type=int, default=0)
     parser.add_argument("--max-teacher-angle-bad", type=int, default=0)
@@ -181,8 +181,8 @@ def main() -> int:
     parser.add_argument(
         "--min-replay-matched-rows",
         type=int,
-        default=755,
-        help="current baseline: replay first diverges at the stop-threshold handoff",
+        default=1036,
+        help="fail if open replay does not match the full current ROM trace",
     )
     args = parser.parse_args()
 
