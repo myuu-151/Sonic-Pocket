@@ -845,11 +845,9 @@ def render_intro_frames(
     reveal_patch_start = camera_scroll_frames + pre_reveal_wait_frames
     logo_start = reveal_patch_start + len(plane1_patch_maps)
     logo_patch_interval = 3
-    # The ROM leaves the animated intro after generated frame 128 in the
-    # current teacher capture and hands over to the final title-screen
-    # tilemaps/fade state. Keeping later generated intro frames on screen makes
-    # Sonic look corrupted because those frames are not the active ROM
-    # composition anymore.
+    # Stop at the last frame that still belongs to the intro tilemap/script
+    # composition. The ROM then switches to the final title tilemaps and starts
+    # the normal title wait loop on the prompt-off phase.
     max_frames = logo_start + 13
     for frame in range(max_frames):
         if reveal_patch_start <= frame < logo_start and reveal_patch_index < len(plane1_patch_maps):

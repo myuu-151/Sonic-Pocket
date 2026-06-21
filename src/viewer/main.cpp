@@ -3031,7 +3031,7 @@ int run_title_screen(
             continue;
         }
         SDL_Texture* overlay = nullptr;
-        const bool prompt_on = press_a.value != nullptr && ((frame / 10) % 2 == 0);
+        const bool prompt_on = press_a.value != nullptr && ((frame / 10) % 2 != 0);
         if (showing_menu) {
             overlay = menu.value;
         } else if (prompt_on) {
