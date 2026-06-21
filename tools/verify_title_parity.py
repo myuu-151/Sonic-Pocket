@@ -31,6 +31,7 @@ DEFAULT_NATIVE_INTRO_START = 336
 
 WAIT_ON_TEACHER_FRAMES = (1327, 1349, 1365, 1401, 1365, 1349)
 WAIT_OFF_TEACHER_FRAMES = (1385, 1329, 1333, 1337, 1333, 1329)
+HANDOFF_TEACHER_FRAMES = tuple(range(593, 629))
 NATIVE_INTRO_SAMPLES = (0, 22, 32, 42, 52, 62, 72, 82, 90, 102, 110, 116, 119, 128)
 
 
@@ -155,6 +156,14 @@ def main() -> int:
             (
                 teacher / f"frame_{teacher_index:05d}.png",
                 args.title_root / "intro" / f"frame_{generated_index:04d}.png",
+            )
+        )
+
+    for index, teacher_frame in enumerate(HANDOFF_TEACHER_FRAMES):
+        checks.append(
+            (
+                teacher / f"frame_{teacher_frame:05d}.png",
+                args.title_root / "handoff" / f"frame_{index:04d}.png",
             )
         )
 

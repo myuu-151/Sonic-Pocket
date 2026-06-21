@@ -2831,6 +2831,7 @@ int run_title_screen(
     std::vector<Texture> wait_on_frames;
     std::vector<Texture> wait_off_frames;
     std::vector<Texture> intro_frames;
+    std::vector<Texture> handoff_frames;
     const auto intro_directory = title_directory / "intro";
     const bool intro_is_teacher_capture =
         std::filesystem::is_regular_file(intro_directory / "teacher_capture.txt");
@@ -2847,6 +2848,22 @@ int run_title_screen(
                 return 1;
             }
             intro_frames.push_back(std::move(intro));
+        }
+    }
+    const auto handoff_directory = title_directory / "handoff";
+    if (std::filesystem::is_directory(handoff_directory)) {
+        for (int index = 0;; ++index) {
+            std::ostringstream filename;
+            filename << "frame_" << std::setw(4) << std::setfill('0') << index << ".png";
+            const auto handoff_path = handoff_directory / filename.str();
+            if (!std::filesystem::is_regular_file(handoff_path)) {
+                break;
+            }
+            Texture handoff = load_png(app.renderer, handoff_path);
+            if (handoff.value == nullptr) {
+                return 1;
+            }
+            handoff_frames.push_back(std::move(handoff));
         }
     }
     if (std::filesystem::is_regular_file(plane2_path) &&
@@ -2959,8 +2976,10 @@ int run_title_screen(
 
     bool running = true;
     bool playing_intro = !intro_frames.empty();
+    bool playing_handoff = false;
     bool showing_menu = false;
     int intro_frame = 0;
+    int handoff_frame = 0;
     int title_logic_tick = 0;
     constexpr Uint32 kTitleFrameDelayMs = 16;
     while (running) {
@@ -2977,6 +2996,10 @@ int run_title_screen(
                     key == SDLK_Z) {
                     if (playing_intro && key != SDLK_ESCAPE) {
                         playing_intro = false;
+                        playing_handoff = false;
+                        frame = 0;
+                    } else if (playing_handoff && key != SDLK_ESCAPE) {
+                        playing_handoff = false;
                         frame = 0;
                     } else if (!showing_menu && key != SDLK_ESCAPE) {
                         showing_menu = true;
@@ -2991,6 +3014,10 @@ int run_title_screen(
                     event.gbutton.button == SDL_GAMEPAD_BUTTON_START) {
                     if (playing_intro) {
                         playing_intro = false;
+                        playing_handoff = false;
+                        frame = 0;
+                    } else if (playing_handoff) {
+                        playing_handoff = false;
                         frame = 0;
                     } else if (!showing_menu) {
                         showing_menu = true;
@@ -3017,15 +3044,35 @@ int run_title_screen(
                     ++intro_frame;
                     if (intro_frame >= static_cast<int>(intro_frames.size())) {
                         playing_intro = false;
+                        playing_handoff = !handoff_frames.empty();
+                        handoff_frame = 0;
                         frame = 0;
                         title_logic_tick = 0;
                     }
                 }
                 if (intro_frame >= static_cast<int>(intro_frames.size())) {
                     playing_intro = false;
+                    playing_handoff = !handoff_frames.empty();
+                    handoff_frame = 0;
                     frame = 0;
                     title_logic_tick = 0;
                 }
+            }
+            SDL_Delay(kTitleFrameDelayMs);
+            continue;
+        }
+        if (playing_handoff) {
+            const int clamped_handoff_frame =
+                std::min<int>(handoff_frame, static_cast<int>(handoff_frames.size()) - 1);
+            if (!render_title_intro_frame(app, handoff_frames[clamped_handoff_frame].value)) {
+                return 1;
+            }
+            if (handoff_frame + 1 < static_cast<int>(handoff_frames.size())) {
+                ++handoff_frame;
+            } else {
+                playing_handoff = false;
+                frame = 0;
+                title_logic_tick = 0;
             }
             SDL_Delay(kTitleFrameDelayMs);
             continue;
