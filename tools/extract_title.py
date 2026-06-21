@@ -952,13 +952,17 @@ def render_intro_frames(
 
         if logo_started_at is not None:
             logo_frame = frame - logo_started_at
-            if 0 <= logo_frame < len(shade_sequence):
+            if logo_body_started_at is not None:
+                body_frame = frame - logo_body_started_at
+            else:
+                body_frame = -1
+            if 0 <= body_frame < len(body_sequence):
                 rgba = alpha_composite_rgba(
                     rgba,
                     render_title_sprite_canvas(
                         sprite_tiles,
-                        (sprite_directory / shade_sequence[logo_frame]).read_bytes(),
-                        logo_shade_palette,
+                        (sprite_directory / body_sequence[body_frame]).read_bytes(),
+                        logo_body_palette,
                         origin_x=TITLE_SONIC_X,
                         origin_y=TITLE_SONIC_Y,
                     ),
@@ -974,17 +978,13 @@ def render_intro_frames(
                         origin_y=TITLE_SONIC_Y,
                     ),
                 )
-            if logo_body_started_at is not None:
-                body_frame = frame - logo_body_started_at
-            else:
-                body_frame = -1
-            if 0 <= body_frame < len(body_sequence):
+            if 0 <= logo_frame < len(shade_sequence):
                 rgba = alpha_composite_rgba(
                     rgba,
                     render_title_sprite_canvas(
                         sprite_tiles,
-                        (sprite_directory / body_sequence[body_frame]).read_bytes(),
-                        logo_body_palette,
+                        (sprite_directory / shade_sequence[logo_frame]).read_bytes(),
+                        logo_shade_palette,
                         origin_x=TITLE_SONIC_X,
                         origin_y=TITLE_SONIC_Y,
                     ),
