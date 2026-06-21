@@ -2819,6 +2819,8 @@ int run_title_screen(
     Texture press_a;
     Texture menu;
     std::vector<Texture> sonic_frames;
+    std::vector<Texture> wait_on_frames;
+    std::vector<Texture> wait_off_frames;
     std::vector<Texture> intro_frames;
     const auto intro_directory = title_directory / "intro";
     const bool intro_is_teacher_capture =
@@ -2866,6 +2868,29 @@ int run_title_screen(
             }
             sonic_frames.push_back(std::move(sonic));
         }
+        auto load_wait_frames = [&](const std::filesystem::path& directory, std::vector<Texture>& frames) {
+            if (!std::filesystem::is_directory(directory)) {
+                return true;
+            }
+            for (int index = 0;; ++index) {
+                std::ostringstream filename;
+                filename << "frame_" << std::setw(4) << std::setfill('0') << index << ".png";
+                const auto path = directory / filename.str();
+                if (!std::filesystem::is_regular_file(path)) {
+                    break;
+                }
+                Texture texture = load_png(app.renderer, path);
+                if (texture.value == nullptr) {
+                    return false;
+                }
+                frames.push_back(std::move(texture));
+            }
+            return true;
+        };
+        if (!load_wait_frames(title_directory / "wait_on", wait_on_frames) ||
+            !load_wait_frames(title_directory / "wait_off", wait_off_frames)) {
+            return 1;
+        }
     } else {
         plane2 = load_png(app.renderer, fallback_title_path);
     }
@@ -2891,6 +2916,23 @@ int run_title_screen(
             cursor -= kTitleSonicDurations[index];
         }
         return sonic_frames.front().value;
+    };
+    auto title_sonic_index = [&sonic_frames](int frame_number) -> int {
+        if (sonic_frames.empty()) {
+            return 0;
+        }
+        constexpr std::array<int, 6> kTitleSonicDurations{4, 2, 2, 4, 2, 2};
+        const int cycle_frames = std::accumulate(
+            kTitleSonicDurations.begin(), kTitleSonicDurations.end(), 0);
+        int cursor = frame_number % cycle_frames;
+        for (std::size_t index = 0; index < sonic_frames.size() &&
+             index < kTitleSonicDurations.size(); ++index) {
+            if (cursor < kTitleSonicDurations[index]) {
+                return static_cast<int>(index);
+            }
+            cursor -= kTitleSonicDurations[index];
+        }
+        return 0;
     };
     if (!intro_frames.empty()) {
         if (!render_title_intro_frame(app, intro_frames.front().value)) {
@@ -2980,14 +3022,30 @@ int run_title_screen(
             continue;
         }
         SDL_Texture* overlay = nullptr;
+        const bool prompt_on = press_a.value != nullptr && ((frame / 10) % 2 == 0);
         if (showing_menu) {
             overlay = menu.value;
-        } else if (press_a.value != nullptr && ((frame / 10) % 2 == 0)) {
+        } else if (prompt_on) {
             overlay = press_a.value;
         } else if (press_a_off.value != nullptr) {
             overlay = press_a_off.value;
         } else if (press_a.value == nullptr) {
             overlay = prompt.value;
+        }
+        if (!showing_menu && !wait_on_frames.empty() && !wait_off_frames.empty()) {
+            const auto& wait_frames = prompt_on ? wait_on_frames : wait_off_frames;
+            const int sonic_index = title_sonic_index(frame);
+            const int clamped_index =
+                std::min<int>(sonic_index, static_cast<int>(wait_frames.size()) - 1);
+            if (!render_title_intro_frame(app, wait_frames[clamped_index].value)) {
+                return 1;
+            }
+            ++title_logic_tick;
+            if ((title_logic_tick & 1) == 0) {
+                ++frame;
+            }
+            SDL_Delay(kTitleFrameDelayMs);
+            continue;
         }
         if (!render_title_frame(app, plane2.value, plane1.value, title_sonic_texture(frame), overlay, true)) {
             return 1;

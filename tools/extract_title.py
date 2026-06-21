@@ -183,8 +183,11 @@ def title_palette_banks(
         elif bank == 0x20:
             plane2[slot_index] = palette
         elif bank == 0x30:
-            # Title prompt/window data is copied into scroll plane 1.
-            plane1[slot_index] = palette
+            # Window/backdrop palette objects share slot numbers with scroll
+            # plane palettes, but they do not replace the scroll plane bank.
+            # Overwriting plane 1 slot 0 here turns island pixels blue because
+            # TitleScr_TMap1 uses palette slot 0 for brown land tiles.
+            pass
     return plane1, plane2, palette_ids
 
 
@@ -532,11 +535,20 @@ def render_layers(
     press_preview_path = output / "title_press_a.png"
     press_off_preview_path = output / "title_press_off.png"
     menu_preview_path = output / "title_menu.png"
+    wait_on_dir = output / "wait_on"
+    wait_off_dir = output / "wait_off"
     states_dir = output / "states"
     states_dir.mkdir(parents=True, exist_ok=True)
+    wait_on_dir.mkdir(parents=True, exist_ok=True)
+    wait_off_dir.mkdir(parents=True, exist_ok=True)
     for stale_state in states_dir.glob("*.png"):
         stale_state.unlink()
+    for stale_wait in wait_on_dir.glob("*.png"):
+        stale_wait.unlink()
+    for stale_wait in wait_off_dir.glob("*.png"):
+        stale_wait.unlink()
     sonic_frame_paths: list[str] = []
+    sonic_frame_rgba: list[bytes] = []
     write_png(plane2_path, TITLE_WIDTH, TITLE_HEIGHT, plane2_composited)
     write_png_rgba(plane1_path, TITLE_WIDTH, TITLE_HEIGHT, rgba_from_rgb_mask(plane1, plane1_mask))
     write_png(title_path, TITLE_WIDTH, TITLE_HEIGHT, composite)
@@ -616,6 +628,7 @@ def render_layers(
         frame_path = output / f"title_sonic_{index}.png"
         write_png_rgba(frame_path, TITLE_WIDTH, TITLE_HEIGHT, frame)
         sonic_frame_paths.append(str(frame_path))
+        sonic_frame_rgba.append(frame)
 
     press_preview_rgba = bytearray(alpha_composite_rgba(rgba_from_rgb(composite), press_a))
     press_off_preview_rgba = bytearray(alpha_composite_rgba(rgba_from_rgb(composite), press_off))
@@ -703,6 +716,18 @@ def render_layers(
     write_png_rgba(state_press_off_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(press_off_preview_rgba))
     write_png_rgba(state_press_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(press_preview_rgba))
     write_png_rgba(state_menu_path, TITLE_WIDTH, TITLE_HEIGHT, bytes(menu_preview_rgba))
+    wait_on_paths: list[str] = []
+    wait_off_paths: list[str] = []
+    for index, sonic_frame in enumerate(sonic_frame_rgba):
+        base_with_sonic = alpha_composite_rgba(rgba_from_rgb(composite), sonic_frame)
+        wait_on = alpha_composite_rgba(base_with_sonic, press_a)
+        wait_off = alpha_composite_rgba(base_with_sonic, press_off)
+        wait_on_path = wait_on_dir / f"frame_{index:04d}.png"
+        wait_off_path = wait_off_dir / f"frame_{index:04d}.png"
+        write_png_rgba(wait_on_path, TITLE_WIDTH, TITLE_HEIGHT, wait_on)
+        write_png_rgba(wait_off_path, TITLE_WIDTH, TITLE_HEIGHT, wait_off)
+        wait_on_paths.append(str(wait_on_path))
+        wait_off_paths.append(str(wait_off_path))
 
     return {
         "title": str(title_path),
@@ -717,6 +742,8 @@ def render_layers(
         "title_press_off": str(press_off_preview_path),
         "title_menu": str(menu_preview_path),
         "state_frames": [str(state_press_off_path), str(state_press_path), str(state_menu_path)],
+        "wait_on_frames": wait_on_paths,
+        "wait_off_frames": wait_off_paths,
         "sonic_frames": sonic_frame_paths,
     }
 
