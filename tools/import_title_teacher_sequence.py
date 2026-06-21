@@ -14,6 +14,14 @@ import shutil
 from pathlib import Path
 
 
+WAIT_ON_TEACHER_FRAMES = (1327, 1349, 1365, 1401, 1365, 1349)
+WAIT_OFF_TEACHER_FRAMES = (1385, 1329, 1333, 1337, 1333, 1329)
+STATE_TEACHER_FRAMES = {
+    "frame_0000_press_off.png": 1385,
+    "frame_0001_press_a.png": 1327,
+}
+
+
 def latest_teacher(root: Path) -> Path:
     latest = root / "latest.txt"
     if latest.is_file():
@@ -58,6 +66,11 @@ def main() -> int:
         default=-1,
         help="last captured ROM frame to import, inclusive; -1 imports through the final captured frame",
     )
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="only import intro frames; leave generated wait/title-state frames untouched",
+    )
     args = parser.parse_args()
 
     teacher = args.teacher or latest_teacher(args.teacher_root)
@@ -88,7 +101,38 @@ def main() -> int:
         f"source={teacher}\nstart={args.start}\nend={end}\nframes={written}\n",
         encoding="utf-8",
     )
+
+    if not args.no_wait:
+        title_root = args.output.parent
+        wait_imports = {
+            title_root / "wait_on": WAIT_ON_TEACHER_FRAMES,
+            title_root / "wait_off": WAIT_OFF_TEACHER_FRAMES,
+        }
+        for directory, frame_numbers in wait_imports.items():
+            directory.mkdir(parents=True, exist_ok=True)
+            for stale in directory.glob("frame_*.png"):
+                stale.unlink()
+            for index, frame in enumerate(frame_numbers):
+                source = teacher / f"frame_{frame:05d}.png"
+                if not source.is_file():
+                    raise SystemExit(f"missing teacher wait frame: {source}")
+                shutil.copyfile(source, directory / f"frame_{index:04d}.png")
+            (directory / "teacher_capture.txt").write_text(
+                f"source={teacher}\nframes={','.join(str(frame) for frame in frame_numbers)}\n",
+                encoding="utf-8",
+            )
+
+        states = title_root / "states"
+        states.mkdir(parents=True, exist_ok=True)
+        for name, frame in STATE_TEACHER_FRAMES.items():
+            source = teacher / f"frame_{frame:05d}.png"
+            if not source.is_file():
+                raise SystemExit(f"missing teacher state frame: {source}")
+            shutil.copyfile(source, states / name)
+
     print(f"Imported {written} title teacher frame(s) from {teacher} to {args.output}")
+    if not args.no_wait:
+        print("Imported ROM-verified title wait frames to out/title/wait_on and out/title/wait_off")
     return 0
 
 

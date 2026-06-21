@@ -43,6 +43,14 @@ local function read_u8(address)
     return mainmemory.read_u8(offset)
 end
 
+local function try_read_u8(address)
+    local offset = address + address_bias
+    if offset < 0 or offset >= main_size then
+        return nil
+    end
+    return mainmemory.read_u8(offset)
+end
+
 local function read_u16(address)
     return read_u8(address) | (read_u8(address + 1) << 8)
 end
@@ -191,11 +199,11 @@ while trace_frame < max_frames do
     local copied_sprites = copied_sprite_line(sprite_count)
 
     trace:write(string.format(
-        "%d,%d,0x%02X,0x%02X,0x%04X,%d,%d,0x%04X,%d,%s,%s,%s,%s,%s\n",
+        "%d,%d,%s,%s,0x%04X,%d,%d,0x%04X,%d,%s,%s,%s,%s,%s\n",
         trace_frame,
         emu_frame,
-        read_u8(VDPSPR_SCROLL_X),
-        read_u8(VDPSPR_SCROLL_Y),
+        try_read_u8(VDPSPR_SCROLL_X) and string.format("0x%02X", try_read_u8(VDPSPR_SCROLL_X)) or "",
+        try_read_u8(VDPSPR_SCROLL_Y) and string.format("0x%02X", try_read_u8(VDPSPR_SCROLL_Y)) or "",
         read_u16(NEXT_SPRITE_OBJECT),
         read_u8(REM_SPRITE_OBJECTS),
         sprite_count,
