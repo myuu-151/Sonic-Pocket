@@ -62,6 +62,10 @@ and audio dispatch.
 - [x] Add title-screen BizHawk teacher capture comparison/import tooling so
       visible title parity can be preserved while generated extractors are
       replaced frame-by-frame.
+- [x] Add title-screen object/sprite tracing so generated transition frames can
+      be repaired from live ROM sprite-object state instead of visual guesses.
+- [x] Add title-screen object/sprite tracing so generated transition frames can
+      be repaired from live ROM sprite-object state instead of visual guesses.
 - [ ] Identify compression formats and implement decompressors.
 - [ ] Build a MAME trace importer connected to the symbol database.
 - [x] Build an asset extractor that requires and verifies the user's original

@@ -54,6 +54,21 @@ directories and must not be committed. Generated extractor frames should only
 replace teacher frames after `tools/compare_title_frames.py` proves they match
 the BizHawk reference.
 
+When generated title frames diverge from the ROM, capture the live title object
+state too:
+
+```powershell
+# In BizHawk's Lua Console, run:
+scripts\bizhawk-title-object-trace.lua
+
+# Then summarize the newest trace:
+python tools/analyze_title_object_trace.py --start 560 --end 660
+```
+
+The object trace records the runtime `SprObjRAM` list plus copied sprite tile,
+position, and palette data after `CopySprites`. Use it to port the title-state
+transition instead of tuning sprite placement by eye.
+
 ## Repository policy
 
 This repository does not contain the original ROM, extracted game assets,
