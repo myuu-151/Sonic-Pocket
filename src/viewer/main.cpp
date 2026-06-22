@@ -2981,6 +2981,15 @@ int run_title_screen(
     int intro_frame = 0;
     int handoff_frame = 0;
     int title_logic_tick = 0;
+    auto restart_title_sequence = [&]() {
+        playing_intro = !intro_frames.empty();
+        playing_handoff = false;
+        showing_menu = false;
+        intro_frame = 0;
+        handoff_frame = 0;
+        frame = 0;
+        title_logic_tick = 0;
+    };
     constexpr Uint32 kTitleFrameDelayMs = 16;
     while (running) {
         SDL_Event event;
@@ -2989,7 +2998,9 @@ int run_title_screen(
                 running = false;
             } else if (event.type == SDL_EVENT_KEY_DOWN) {
                 const SDL_Keycode key = event.key.key;
-                if (
+                if (key == SDLK_R) {
+                    restart_title_sequence();
+                } else if (
                     key == SDLK_ESCAPE ||
                     key == SDLK_RETURN ||
                     key == SDLK_SPACE ||
@@ -3542,6 +3553,7 @@ int teacher_trace(
 int main(int argc, char* argv[]) {
     bool smoke_test = false;
     bool title_screen = false;
+    bool stage_screen = false;
     std::filesystem::path requested_data;
     std::filesystem::path replay_trace_path;
     std::filesystem::path trace_output_path;
@@ -3553,6 +3565,8 @@ int main(int argc, char* argv[]) {
             smoke_test = true;
         } else if (argument == "--title-screen") {
             title_screen = true;
+        } else if (argument == "--stage-screen") {
+            stage_screen = true;
         } else if (argument == "--replay-trace" && index + 1 < argc) {
             replay_trace_path = argv[++index];
         } else if (argument == "--trace-out" && index + 1 < argc) {
@@ -3566,7 +3580,7 @@ int main(int argc, char* argv[]) {
         } else {
             std::cerr
                 << "Usage: sonic-pocket-viewer [data-directory] [--smoke-test] "
-                   "[--title-screen] "
+                   "[--title-screen] [--stage-screen] "
                    "[--replay-trace trace.csv --trace-out native.csv] "
                    "[--teacher-trace trace.csv --teacher-out teacher.csv]\n";
             return 2;
@@ -3577,6 +3591,10 @@ int main(int argc, char* argv[]) {
     }
     if (!teacher_trace_path.empty() && teacher_output_path.empty()) {
         teacher_output_path = "out/native-teacher-trace.csv";
+    }
+    const bool trace_mode = !replay_trace_path.empty() || !teacher_trace_path.empty();
+    if (!title_screen && !stage_screen && requested_data.empty() && !trace_mode) {
+        title_screen = true;
     }
 
     if (title_screen) {
