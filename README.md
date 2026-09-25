@@ -119,11 +119,3 @@ notices, and facts about the ROM such as routine addresses.
 - [`docs/notes/`](docs/notes/README.md): how the game works.
 - [`docs/valleybell-reference.md`](docs/valleybell-reference.md): the SPA
   disassembly and how this project uses it.
-
-## History
-
-An earlier attempt hand-wrote the game logic in a native viewer and tuned it
-against emulator traces; it stalled on endless small mismatches. It was
-replaced by this recompilation and remains available in the git history
-(before commit `e15dd20`). See
-[`docs/recomp-plan.md`](docs/recomp-plan.md) for what went wrong.
