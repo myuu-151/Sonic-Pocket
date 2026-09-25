@@ -83,10 +83,9 @@ Machine::Machine()
 	m_cpu = std::make_unique<ngpc_cpu>(*this);
 	m_cpu->device_start();
 	m_cpu->on_trap = [this](offs_t pc) { return bios_trap(pc); };
-	m_cpu->on_to3 = [this](int to3) {
-		if (to3 && !m_old_to3 && m_z80_running)
+	m_cpu->on_timer3 = [this]() {
+		if (m_z80_running)
 			z80_gen_int(&m_z80, 0xff);
-		m_old_to3 = to3;
 	};
 
 	m_cpu->on_step_finished = [this](int cycles) { advance(cycles); };

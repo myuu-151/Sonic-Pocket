@@ -27,8 +27,13 @@ public:
 	// instructions. Recompiled code uses this in place of step().
 	void advance_peripherals(int cycles);
 
-	// Called when timer flip-flop 3 changes (NGPC: rising edge -> Z80 IRQ).
+	// Called when timer flip-flop 3 changes.
 	std::function<void(int to3)> on_to3;
+
+	// Called on every timer 3 match. On the NGPC this interrupts the Z80,
+	// which clocks the sound driver (Mednafen behaviour; interrupting only on
+	// rising edges of TO3, as MAME does, plays music at half speed).
+	std::function<void()> on_timer3;
 
 	// Receives the cycle count of every completed step (interpreted or
 	// recompiled); the machine uses it to advance video and sound.

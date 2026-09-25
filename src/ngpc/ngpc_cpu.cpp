@@ -364,6 +364,8 @@ void ngpc_cpu::tlcs900_handle_timers()
 				m_timer_8[3] = 0;
 				m_int_reg[INTET32] |= 0x80;
 				m_check_irqs = 1;
+				if ( on_timer3 )
+					on_timer3();
 
 				if ( m_t8_invert & 0x20 )
 				{
