@@ -136,9 +136,8 @@ angle `0x0A` produced positive X and Y velocity on an ascending slope, while
 Once airborne, `relax_airborne_surface_angle` at `0x39ABCA` moved the angle
 `0x40`, `0x3C`, `0x38`, and so on toward zero by four units per gameplay tick.
 
-See [runtime-trace-001.md](runtime-trace-001.md) and
-[runtime-trace-002.md](runtime-trace-002.md), and
-[runtime-trace-003.md](runtime-trace-003.md) for captured checkpoints.
+These observations come from BizHawk runtime traces captured during the first
+attempt at this project.
 
 ## Hurt, death, and spring launch
 

@@ -75,8 +75,6 @@ Collision query
   output: signed correction distance, surface angle, optional owner
 ```
 
-The next validation step is the BizHawk capture described in
-[`docs/runtime-tracing.md`](../docs/runtime-tracing.md): flat ground, a slope,
-the first jump landing, and a spindash-to-roll transition. Those traces can
-confirm the carry contract, angle orientation, and the task fields that select
-collision planes.
+These contracts are now executed exactly by the recompiled game; when the
+collision code is rewritten as structured C++, the lockstep verifier checks it
+against the original routines.

@@ -1,6 +1,6 @@
 # Static recompilation plan
 
-This branch replaces the hand-written port (`src/viewer`) with a static
+This project replaces an earlier hand-written port with a static
 recompilation of the cartridge's TLCS-900/H code. Game logic is translated
 mechanically into C++, so it behaves like the original by construction instead
 of being tuned against traces.
@@ -33,20 +33,24 @@ ROM ──► recompiler ──► generated C++ (one function per routine)
    dispatch match the Mednafen/BizHawk core. With the interpreter as the CPU,
    this is a complete emulator and the baseline everything else is checked
    against.
-2. **Recompiler**. Decodes the ROM using the same opcode tables as the
-   interpreter and emits C++ that calls the interpreter's own ALU and flag
-   helpers. Every block adds its cycle count and checks for pending
-   interrupts, so video raster effects and timer interrupts behave as they do
-   in the interpreter. Indirect jumps and calls go through an
-   address-to-function table; anything unknown (for example the flash routine
-   the game copies to RAM at `0x6E00`) falls back to the interpreter.
+2. **Recompiler** (`src/recomp/`, runtime in `src/recomp_rt/`). Decodes the
+   ROM with the interpreter's own opcode tables and emits one C++ function per
+   routine. Each instruction does the interpreter's operand setup and calls
+   its handler, so semantics are identical by construction; jumps, calls and
+   returns become gotos, C++ calls and returns. Every instruction runs the
+   same interrupt and timer bookkeeping as one interpreter step, so raster
+   effects and interrupts land exactly where they do in the interpreter.
+   Indirect jumps and calls go through an address-to-function table; anything
+   unknown (for example the flash routine the game copies to RAM at `0x6E00`)
+   falls back to the interpreter, and stack reloads (`KillObject`) unwind to a
+   top-level trampoline.
 3. **Frontend**. SDL3 window, input and audio on top of the machine.
 
 ## Verification
 
 - **Machine vs BizHawk.** `scripts/bizhawk-dump-reference.lua` records work RAM
   every frame; `ngpc-run --dump-ram` records ours;
-  `tools/compare_ram_frames.py` compares them. Current state: after boot, 1078
+  `tools/compare_ram_frames.py` compares them. Current state: after boot, 1077
   of 1198 frames are byte-identical outside the stack. The remaining
   differences are the SEGA voice sample pointer (one sample of phase), boot
   frames and a short run of object bytes around frame 600.
@@ -79,9 +83,30 @@ machines.
   Mednafen's flash model ignores that erase and ours does not.
 - Timer prescaler rates follow Mednafen (T1 = 256 cycles), not MAME's newer
   databook rates, because they match the reference captures.
+- The Z80 is interrupted on every timer 3 match, as in Mednafen. MAME only
+  interrupts on rising edges of timer flip-flop 3, which plays the music at
+  half tempo.
 
 ## Repository policy
 
 Generated code is derived from the ROM, so it is produced at build time from
 the user's own cartridge and never committed. Addresses and function lists
 (facts about the ROM) may be committed.
+
+## Roadmap
+
+1. **Readable output.** Lift the generated code to plain C++ expressions and
+   structured control flow instead of handler calls, with timing bookkeeping
+   per block rather than per instruction. Faster and far easier to read.
+2. **Gameplay coverage.** Record input while playing through every zone,
+   boss, special stage and menu, and run the lockstep check against those
+   recordings instead of only the attract sequence.
+3. **Typed RAM.** Describe the known RAM layouts (task records, the player at
+   `0x6708`, sprite lists, level headers) as C++ structs.
+4. **Structured systems.** Rewrite systems (scheduler, player, collision,
+   objects, camera, level loading) as classes, one at a time, each verified by
+   lockstep before its generated version is retired.
+5. **Native presentation.** Optional native rendering and audio (widescreen,
+   higher resolution, a native music sequencer) once game logic is native.
+6. **Other platforms.** The runtime is portable C++; new platforms need a
+   video/audio/input layer and big-endian care on big-endian CPUs.

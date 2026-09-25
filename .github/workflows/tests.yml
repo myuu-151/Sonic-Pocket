@@ -17,3 +17,14 @@ jobs:
           python-version: "3.12"
       - name: Run ROM-free tooling tests
         run: python -m unittest discover -s tests -v
+
+  runtime:
+    # Builds the machine, interpreter runner and recompiler. The recompiled
+    # game itself needs a cartridge, so it is not built here.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release --target ngpc-run spa-recomp

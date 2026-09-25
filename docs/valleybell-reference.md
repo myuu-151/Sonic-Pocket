@@ -6,8 +6,8 @@ It is an exceptionally useful reference, but it is not part of this repository.
 
 ## Useful contents
 
-- `disassembly/spa.asm`: a roughly two-million-line named TLCS-900/H
-  disassembly with RAM labels and cross-references.
+- `disassembly/spa.asm`: an 87,000-line named TLCS-900/H disassembly with
+  RAM labels and cross-references. It reassembles to a nearly identical ROM.
 - `disassembly/Levels.asm` and `level/`: complete level, collision, palette,
   block, and object-placement extraction.
 - `disassembly/Sprites.asm`, `sprites/`, and `art/`: sprite layouts, tile data,
@@ -36,16 +36,19 @@ facts, addresses, formats, and our own implementation. Code from individual
 tools should only be reused when its GPLv2 terms and project-license impact are
 acceptable.
 
-## Immediate impact
+## How this project uses it
 
-This reference changes the most efficient path forward:
+- `tools/recomp_seeds.py` reads an assembled listing of the disassembly and
+  writes `config/recomp/functions.txt`: the routine entry points and their
+  names, which seed the recompiler.
+- The same listing validates the recompiler's decoder: every instruction in
+  the disassembly must decode to the same length (`spa-recomp --check-listing`).
+- The disassembly's RAM names and structure notes guide the notes in
+  `docs/notes/` and future structured rewrites of game systems.
 
-1. Import high-value labels and RAM names into the Ghidra symbol database.
-2. Use the documented object list and level layouts to specify ROM-driven
-   extractors rather than rediscovering every table.
-3. Use SonLVL and the extracted level files to validate maps, collision, and
-   object placement.
-4. Use the sound format documentation and C driver as behavioral references
-   for native audio.
-5. Retain BizHawk traces for timing, regression, and verification rather than
-   primary symbol discovery.
+To produce the listing, assemble the disassembly with the bundled Macroassembler
+AS (`disassembly/build.bat` passes `-L`), then run:
+
+```powershell
+python tools/recomp_seeds.py <path>/Main.lst
+```

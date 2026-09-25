@@ -8,13 +8,20 @@ Rom/
 # Local reference emulator installation
 Emu/
 
-# Local reverse-engineering applications and SDKs
-Tools/
+# Local reverse-engineering material and SDKs
 SonicPocketAdventure_disasm+tools/
+reference/
+tools/downloads/
+tools/extension-src/
+tools/ghidra-projects/
+tools/ghidra_*/
+tools/jdk-*/
+tools/ngdis/
 
-# Generated analysis and build output
+# Build output, generated code and captures
 build/
 out/
+work/
 *.mid
 *.wav
 *.trace
@@ -30,6 +37,3 @@ __pycache__/
 *.user
 .DS_Store
 Thumbs.db
-
-# Upstream reference sources fetched for study (MAME, Beetle NGP)
-reference/

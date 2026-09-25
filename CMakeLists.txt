@@ -2,45 +2,9 @@ cmake_minimum_required(VERSION 3.25)
 
 project(SonicPocket LANGUAGES C CXX)
 
-include(FetchContent)
-
-set(SDL_SHARED ON CACHE BOOL "" FORCE)
-set(SDL_STATIC OFF CACHE BOOL "" FORCE)
-set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-    SDL3
-    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG release-3.4.8
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(SDL3)
-
-add_executable(sonic-pocket-viewer
-    src/viewer/main.cpp
-)
-
-target_compile_features(sonic-pocket-viewer PRIVATE cxx_std_20)
-target_link_libraries(sonic-pocket-viewer PRIVATE SDL3::SDL3)
-
-if(MSVC)
-    target_compile_options(sonic-pocket-viewer PRIVATE /W4 /permissive-)
-else()
-    target_compile_options(sonic-pocket-viewer PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
-add_custom_command(
-    TARGET sonic-pocket-viewer
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:SDL3::SDL3>
-        $<TARGET_FILE_DIR:sonic-pocket-viewer>
-)
-
 # ---------------------------------------------------------------------------
-# Recomp runtime: NGPC machine (MAME-derived CPU/video, HLE BIOS) and tools.
+# NGPC machine: MAME-derived TLCS-900/H CPU, K2GE video and T6W28 sound, a Z80
+# core and a high-level BIOS. Builds without the cartridge.
 
 add_library(tlcs900 STATIC
     src/cpu/tlcs900/tlcs900.cpp
@@ -63,8 +27,16 @@ add_library(ngpc STATIC
 target_include_directories(ngpc PUBLIC src)
 target_link_libraries(ngpc PUBLIC tlcs900 z80core)
 
+# Headless interpreter runs, screenshots and RAM dumps.
 add_executable(ngpc-run src/apps/ngpc_run.cpp)
 target_link_libraries(ngpc-run PRIVATE ngpc)
+
+# The static recompiler itself.
+add_executable(spa-recomp
+    src/recomp/main.cpp
+    src/recomp/decoder.cpp
+)
+target_link_libraries(spa-recomp PRIVATE tlcs900)
 
 if(MSVC)
     target_compile_options(tlcs900 PRIVATE /W3)
@@ -73,13 +45,7 @@ if(MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
-# Static recompiler and the recompiled game.
-
-add_executable(spa-recomp
-    src/recomp/main.cpp
-    src/recomp/decoder.cpp
-)
-target_link_libraries(spa-recomp PRIVATE tlcs900)
+# The recompiled game. Generated at build time from the user's cartridge.
 
 set(SPA_ROM "" CACHE FILEPATH "Sonic Pocket Adventure cartridge image used to generate the recompiled code")
 set(SPA_LISTING "" CACHE FILEPATH "Optional listing_instructions.txt for disassembly comments in generated code")
@@ -120,11 +86,28 @@ if(SPA_ROM)
     target_include_directories(spa_game PUBLIC src ${SPA_GENERATED_DIR})
     target_link_libraries(spa_game PUBLIC ngpc)
     if(MSVC)
+        # One compiler process: the generated sources are large.
         target_compile_options(spa_game PRIVATE /bigobj /EHsc)
     endif()
 
+    # Lockstep check: recompiled game vs interpreter.
     add_executable(spa-verify src/apps/spa_verify.cpp)
     target_link_libraries(spa-verify PRIVATE spa_game)
+
+    # The game, with an SDL3 window, input and audio.
+    include(FetchContent)
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-3.4.8
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(SDL3)
 
     add_executable(sonic-pocket src/apps/sonic_pocket.cpp)
     target_link_libraries(sonic-pocket PRIVATE spa_game SDL3::SDL3)
