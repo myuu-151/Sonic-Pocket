@@ -57,6 +57,7 @@ add_library(ngpc STATIC
     src/ngpc/ngpc_cpu.cpp
     src/ngpc/k2ge.cpp
     src/ngpc/machine.cpp
+    src/ngpc/t6w28.cpp
     src/common/png.cpp
 )
 target_include_directories(ngpc PUBLIC src)
@@ -124,4 +125,14 @@ if(SPA_ROM)
 
     add_executable(spa-verify src/apps/spa_verify.cpp)
     target_link_libraries(spa-verify PRIVATE spa_game)
+
+    add_executable(sonic-pocket src/apps/sonic_pocket.cpp)
+    target_link_libraries(sonic-pocket PRIVATE spa_game SDL3::SDL3)
+    add_custom_command(
+        TARGET sonic-pocket
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL3::SDL3>
+            $<TARGET_FILE_DIR:sonic-pocket>
+    )
 endif()

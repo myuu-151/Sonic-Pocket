@@ -154,7 +154,10 @@ void Machine::boot(int language, const RtcTime &rtc)
 	m_frame = 0;
 	m_z80_running = false;
 	m_old_to3 = 0;
-	psg_writes.clear();
+	m_psg = t6w28();
+	m_dac_left = m_dac_right = 0x80;
+	m_audio_cycles = m_audio_ticks = m_audio_left = m_audio_right = 0;
+	m_audio.clear();
 
 	m_line = 0;
 	m_line_start_cycle = 0;
@@ -325,7 +328,19 @@ void Machine::io_write(offs_t offset, uint8_t data)
 	case 0x20:  // T6W28 "right" (tone)
 	case 0x21:  // T6W28 "left" (noise)
 		if (m_io[0x38] == 0x55 && m_io[0x39] == 0xAA)
-			psg_writes.emplace_back(static_cast<uint8_t>(offset - 0x20), data);
+			m_psg.write(offset - 0x20, data);
+		break;
+	case 0x22:  // DAC right
+		m_dac_right = data;
+		break;
+	case 0x23:  // DAC left
+		m_dac_left = data;
+		break;
+	case 0x38:  // sound chip enable
+		if (data == 0x55)
+			m_psg.set_enable(true);
+		else if (data == 0xAA)
+			m_psg.set_enable(false);
 		break;
 	case 0x39:
 		if (data == 0x55)
@@ -639,9 +654,39 @@ void Machine::run_z80_until(int64_t target_cpu_cycle)
 }
 
 
+// The T6W28 runs at 3.072 MHz / 16 = 192 kHz, one tick every 32 CPU cycles;
+// four ticks are averaged into each 48 kHz output sample. Mixing levels follow
+// MAME's NGP driver (PSG 0.5, DACs 0.25).
+void Machine::advance_audio(int cycles)
+{
+	m_audio_cycles += cycles;
+	while (m_audio_cycles >= 32)
+	{
+		m_audio_cycles -= 32;
+		int left, right;
+		m_psg.generate(left, right);
+		m_audio_left += left;
+		m_audio_right += right;
+		if (++m_audio_ticks == 4)
+		{
+			const int dac_left = (m_dac_left - 0x80) * 64;
+			const int dac_right = (m_dac_right - 0x80) * 64;
+			m_audio.push_back(static_cast<int16_t>(m_audio_left / 8 + dac_left));
+			m_audio.push_back(static_cast<int16_t>(m_audio_right / 8 + dac_right));
+			m_audio_ticks = 0;
+			m_audio_left = m_audio_right = 0;
+		}
+	}
+	// Hosts that never drain the buffer (headless tools) keep only ~1 second.
+	if (m_audio.size() > AUDIO_RATE * 2 * 2)
+		m_audio.erase(m_audio.begin(), m_audio.begin() + AUDIO_RATE * 2);
+}
+
+
 void Machine::advance(int cycles)
 {
 	m_cpu_cycle += cycles;
+	advance_audio(cycles);
 	bool frame_ended = false;
 
 	if (m_hblank_pending && m_cpu_cycle >= m_line_start_cycle + k2ge::HBLANK_END_CYCLE)
@@ -715,7 +760,7 @@ void Machine::z80_write(void *userdata, uint16_t addr, uint8_t data)
 	if (addr < 0x1000)
 		self->m_sound_ram[addr] = data;
 	else if (addr == 0x4000 || addr == 0x4001)
-		self->psg_writes.emplace_back(static_cast<uint8_t>(addr & 1), data);
+		self->m_psg.write(addr & 1, data);
 	else if (addr == 0x8000)
 		self->m_io[0x3c] = data;
 	else if (addr == 0xc000)

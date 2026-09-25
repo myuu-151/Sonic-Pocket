@@ -7,6 +7,7 @@
 
 #include "ngpc/k2ge.h"
 #include "ngpc/ngpc_cpu.h"
+#include "ngpc/t6w28.h"
 
 #include <cstdint>
 #include <functional>
@@ -90,9 +91,10 @@ public:
 	ngpc_cpu &cpu() { return *m_cpu; }
 	k2ge &video() { return m_video; }
 
-	// Sound chip writes (T6W28 port 0 = right/tone, 1 = left/noise), exposed
-	// for the audio backend.
-	std::vector<std::pair<uint8_t, uint8_t>> psg_writes;
+	// Stereo audio produced so far, interleaved left/right at AUDIO_RATE.
+	// The host takes the samples it wants and clears the buffer.
+	static constexpr int AUDIO_RATE = 48000;
+	std::vector<int16_t> &audio_samples() { return m_audio; }
 
 private:
 	enum FlashState
@@ -112,6 +114,7 @@ private:
 	void io_write(offs_t offset, uint8_t data);
 	void flash_write(offs_t offset, uint8_t data);
 	void restore_flash_id_bytes();
+	void advance_audio(int cycles);
 
 	bool bios_trap(offs_t pc);
 	void bios_system_call(int function);
@@ -129,6 +132,14 @@ private:
 
 	std::unique_ptr<ngpc_cpu> m_cpu;
 	k2ge m_video;
+	t6w28 m_psg;
+	uint8_t m_dac_left = 0x80;
+	uint8_t m_dac_right = 0x80;
+	int m_audio_cycles = 0;            // CPU cycles towards the next PSG tick
+	int m_audio_ticks = 0;             // PSG ticks accumulated for this sample
+	int m_audio_left = 0;
+	int m_audio_right = 0;
+	std::vector<int16_t> m_audio;
 	z80 m_z80 = {};
 	bool m_z80_running = false;
 	uint8_t m_old_to3 = 0;
