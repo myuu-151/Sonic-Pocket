@@ -30,3 +30,6 @@ __pycache__/
 *.user
 .DS_Store
 Thumbs.db
+
+# Upstream reference sources fetched for study (MAME, Beetle NGP)
+reference/
