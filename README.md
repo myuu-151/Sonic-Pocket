@@ -1,3 +1,5 @@
+![Sonic Pocket](docs/images/banner.jpg)
+
 # Sonic Pocket
 
 A static recompilation of *Sonic the Hedgehog: Pocket Adventure* (Neo Geo
