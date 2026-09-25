@@ -30,6 +30,11 @@ public:
 	// Called when timer flip-flop 3 changes (NGPC: rising edge -> Z80 IRQ).
 	std::function<void(int to3)> on_to3;
 
+	// Receives the cycle count of every completed step (interpreted or
+	// recompiled); the machine uses it to advance video and sound.
+	std::function<void(int cycles)> on_step_finished;
+	void step_finished(int cycles) override { if (on_step_finished) on_step_finished(cycles); }
+
 	// High-level BIOS entry points; see tlcs900_device::trap_hook.
 	std::function<bool(offs_t pc)> on_trap;
 	bool trap_hook(offs_t pc) override { return on_trap && on_trap(pc); }

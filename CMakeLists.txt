@@ -70,3 +70,58 @@ if(MSVC)
     target_compile_options(ngpc PRIVATE /W4 /permissive-)
     target_compile_options(ngpc-run PRIVATE /W4 /permissive-)
 endif()
+
+# ---------------------------------------------------------------------------
+# Static recompiler and the recompiled game.
+
+add_executable(spa-recomp
+    src/recomp/main.cpp
+    src/recomp/decoder.cpp
+)
+target_link_libraries(spa-recomp PRIVATE tlcs900)
+
+set(SPA_ROM "" CACHE FILEPATH "Sonic Pocket Adventure cartridge image used to generate the recompiled code")
+set(SPA_LISTING "" CACHE FILEPATH "Optional listing_instructions.txt for disassembly comments in generated code")
+
+if(SPA_ROM)
+    set(SPA_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+    set(SPA_GENERATED_SOURCES ${SPA_GENERATED_DIR}/dispatch.cpp)
+    foreach(shard RANGE 0 31)
+        string(LENGTH "${shard}" shard_length)
+        if(shard_length EQUAL 1)
+            set(shard "0${shard}")
+        endif()
+        list(APPEND SPA_GENERATED_SOURCES ${SPA_GENERATED_DIR}/game_${shard}.cpp)
+    endforeach()
+
+    set(SPA_RECOMP_ARGS
+        --rom ${SPA_ROM}
+        --functions ${CMAKE_SOURCE_DIR}/config/recomp/functions.txt
+        --out ${SPA_GENERATED_DIR}
+    )
+    if(SPA_LISTING)
+        list(APPEND SPA_RECOMP_ARGS --listing ${SPA_LISTING})
+    endif()
+
+    add_custom_command(
+        OUTPUT ${SPA_GENERATED_SOURCES} ${SPA_GENERATED_DIR}/functions.h
+        COMMAND spa-recomp ${SPA_RECOMP_ARGS}
+        DEPENDS spa-recomp ${CMAKE_SOURCE_DIR}/config/recomp/functions.txt ${SPA_ROM}
+        COMMENT "Recompiling Sonic Pocket Adventure"
+        VERBATIM
+    )
+
+    add_library(spa_game STATIC
+        ${SPA_GENERATED_SOURCES}
+        src/recomp_rt/runtime.cpp
+        src/recomp_rt/game.cpp
+    )
+    target_include_directories(spa_game PUBLIC src ${SPA_GENERATED_DIR})
+    target_link_libraries(spa_game PUBLIC ngpc)
+    if(MSVC)
+        target_compile_options(spa_game PRIVATE /bigobj /EHsc)
+    endif()
+
+    add_executable(spa-verify src/apps/spa_verify.cpp)
+    target_link_libraries(spa-verify PRIVATE spa_game)
+endif()

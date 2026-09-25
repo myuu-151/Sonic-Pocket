@@ -55,6 +55,25 @@ public:
 	// Executes exactly one instruction (plus any interrupt taken before it).
 	int step();
 
+	// The three phases of step(), shared with recompiled code so that both
+	// accept interrupts and advance timers identically.
+	void step_irq_phase();
+	void step_execute();
+	void step_finish();
+	// Called at the end of every step with the cycles it took.
+	virtual void step_finished(int cycles) { (void)cycles; }
+
+	// Recompiled code brackets each instruction with these. begin returns
+	// true if an interrupt was accepted instead; that step is then complete
+	// and PC holds the interrupt handler address.
+	bool recompiled_step_begin(offs_t pc);
+	void recompiled_step_end(int cycles);
+
+	// Control register lookups used by LDC, matching prepare_operands().
+	uint8_t *control_reg8(uint8_t code);
+	uint16_t *control_reg16(uint8_t code);
+	uint32_t *control_reg32(uint8_t code);
+
 	void set_input_line(int line, int state) { execute_set_input(line, state); }
 
 	// Called before each instruction fetch. Returning true means the hook

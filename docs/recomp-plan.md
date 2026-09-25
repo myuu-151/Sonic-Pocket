@@ -51,8 +51,26 @@ ROM ──► recompiler ──► generated C++ (one function per routine)
   differences are the SEGA voice sample pointer (one sample of phase), boot
   frames and a short run of object bytes around frame 600.
 - **Recompiled vs interpreter.** Both run on the same machine, so they must
-  agree exactly. The gate is registers and RAM compared at every frame
-  boundary (and at block boundaries when debugging).
+  agree exactly. `spa-verify` runs both side by side and compares registers,
+  cycle count, work RAM, sound RAM, I/O and video RAM after every frame.
+  Current state: 1200 frames in exact lockstep. The only code still
+  interpreted is the flash routine the game copies to RAM (`0x6E00`) and the
+  HLE BIOS entry points.
+
+## Building
+
+```powershell
+cmake -S . -B build/recomp -G "Visual Studio 18 2026" -A x64 `
+      -DSPA_ROM="<path to cartridge>"
+cmake --build build/recomp --config Release --target spa-verify -- /m:1
+```
+
+`config/recomp/functions.txt` lists routine entry points. It is regenerated
+from an assembled listing of the disassembly with `tools/recomp_seeds.py`,
+which also writes the instruction list that `spa-recomp --check-listing`
+uses to validate the decoder (all 49,933 instructions decode identically).
+The generated code is large; build it with one compiler process on low-power
+machines.
 
 ## Known deliberate differences from BizHawk
 

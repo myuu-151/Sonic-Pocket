@@ -89,6 +89,7 @@ Machine::Machine()
 		m_old_to3 = to3;
 	};
 
+	m_cpu->on_step_finished = [this](int cycles) { advance(cycles); };
 	m_video.current_cycle_in_line = [this]() {
 		return static_cast<int>(m_cpu_cycle - m_line_start_cycle);
 	};
@@ -154,6 +155,11 @@ void Machine::boot(int language, const RtcTime &rtc)
 	m_z80_running = false;
 	m_old_to3 = 0;
 	psg_writes.clear();
+
+	m_line = 0;
+	m_line_start_cycle = 0;
+	m_hblank_pending = false;
+	m_frame_done = false;
 
 	m_video.reset();
 	m_cpu->device_reset();
@@ -253,6 +259,9 @@ void Machine::boot(int language, const RtcTime &rtc)
 	m_cpu->m_regbank = 0;
 	m_cpu->m_xssp.d = 0x6C00;
 	m_cpu->m_prefetch_clear = true;
+
+	m_video.begin_line(0);
+	m_hblank_pending = true;
 }
 
 
@@ -614,24 +623,6 @@ bool Machine::bios_trap(offs_t pc)
 }
 
 
-void Machine::run_cpu_until(int64_t target_cycle)
-{
-	while (m_cpu_cycle < target_cycle)
-	{
-		if (m_trace_remaining > 0)
-		{
-			--m_trace_remaining;
-			const ngpc_cpu &c = *m_cpu;
-			const int b = c.m_regbank;
-			std::fprintf(stderr, "%06X SR=%04X XWA=%08X XBC=%08X XDE=%08X XHL=%08X XIX=%08X XIY=%08X XIZ=%08X XSP=%08X\n",
-					c.m_pc.d, c.m_sr.w.l, c.m_xwa[b].d, c.m_xbc[b].d, c.m_xde[b].d, c.m_xhl[b].d,
-					c.m_xix.d, c.m_xiy.d, c.m_xiz.d, c.m_xssp.d);
-		}
-		m_cpu_cycle += m_cpu->step();
-	}
-}
-
-
 void Machine::run_z80_until(int64_t target_cpu_cycle)
 {
 	if (!m_z80_running)
@@ -648,21 +639,62 @@ void Machine::run_z80_until(int64_t target_cpu_cycle)
 }
 
 
+void Machine::advance(int cycles)
+{
+	m_cpu_cycle += cycles;
+	bool frame_ended = false;
+
+	if (m_hblank_pending && m_cpu_cycle >= m_line_start_cycle + k2ge::HBLANK_END_CYCLE)
+	{
+		m_hblank_pending = false;
+		m_video.end_hblank();
+	}
+
+	while (m_cpu_cycle >= m_line_start_cycle + k2ge::CYCLES_PER_LINE)
+	{
+		m_line_start_cycle += k2ge::CYCLES_PER_LINE;
+		run_z80_until(m_line_start_cycle);
+
+		if (++m_line == k2ge::LINES_PER_FRAME)
+		{
+			m_line = 0;
+			++m_frame;
+			frame_ended = true;
+		}
+		m_video.begin_line(m_line);
+		m_hblank_pending = m_line == k2ge::LINES_PER_FRAME - 1 || m_line < 151;
+		if (m_hblank_pending && m_cpu_cycle >= m_line_start_cycle + k2ge::HBLANK_END_CYCLE)
+		{
+			m_hblank_pending = false;
+			m_video.end_hblank();
+		}
+	}
+
+	if (frame_ended)
+	{
+		m_frame_done = true;
+		if (on_frame_end)
+			on_frame_end();
+	}
+}
+
+
 void Machine::run_frame()
 {
-	for (int line = 0; line < k2ge::LINES_PER_FRAME; ++line)
+	m_frame_done = false;
+	while (!m_frame_done)
 	{
-		m_line_start_cycle = static_cast<int>(m_cpu_cycle);
-		const int64_t line_start = m_cpu_cycle;
-		m_video.begin_line(line);
-		const bool hblank = line == k2ge::LINES_PER_FRAME - 1 || line < 151;
-		run_cpu_until(line_start + k2ge::HBLANK_END_CYCLE);
-		if (hblank)
-			m_video.end_hblank();
-		run_cpu_until(line_start + k2ge::CYCLES_PER_LINE);
-		run_z80_until(m_cpu_cycle);
+		if (m_trace_remaining > 0)
+		{
+			--m_trace_remaining;
+			const ngpc_cpu &c = *m_cpu;
+			const int b = c.m_regbank;
+			std::fprintf(stderr, "%06X SR=%04X XWA=%08X XBC=%08X XDE=%08X XHL=%08X XIX=%08X XIY=%08X XIZ=%08X XSP=%08X\n",
+					c.m_pc.d, c.m_sr.w.l, c.m_xwa[b].d, c.m_xbc[b].d, c.m_xde[b].d, c.m_xhl[b].d,
+					c.m_xix.d, c.m_xiy.d, c.m_xiz.d, c.m_xssp.d);
+		}
+		m_cpu->step();
 	}
-	++m_frame;
 }
 
 

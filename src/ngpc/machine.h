@@ -9,6 +9,7 @@
 #include "ngpc/ngpc_cpu.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -59,8 +60,13 @@ public:
 	// cartridge (entry point, system RAM, I/O and video defaults).
 	void boot(int language = 1, const RtcTime &rtc = {});
 
-	// Runs one video frame (199 lines, 102485 CPU cycles).
+	// Runs one video frame (199 lines, 102485 CPU cycles) with the
+	// interpreter.
 	void run_frame();
+
+	// Called when the last line of a frame has finished. The recompiled
+	// runtime uses this to hand the finished frame to the host.
+	std::function<void()> on_frame_end;
 
 	void set_buttons(uint8_t buttons) { m_buttons = buttons; }
 
@@ -72,6 +78,10 @@ public:
 
 	// Main work RAM, 0x4000-0x6FFF.
 	uint8_t *work_ram() { return m_ram; }
+	const uint8_t *sound_ram() const { return m_sound_ram; }
+	const uint8_t *io_registers() const { return m_io; }
+	const std::vector<uint8_t> &cartridge() const { return m_cart; }
+	int64_t cpu_cycle() const { return m_cpu_cycle; }
 
 	// tlcs900_bus
 	uint8_t read_byte(offs_t addr) override;
@@ -108,7 +118,8 @@ private:
 	void bios_return_from_call();
 	void bios_return_from_interrupt();
 
-	void run_cpu_until(int64_t target_cycle);
+	// Advances video/sound timing after each CPU step.
+	void advance(int cycles);
 	void run_z80_until(int64_t target_cpu_cycle);
 
 	static uint8_t z80_read(void *userdata, uint16_t addr);
@@ -136,7 +147,10 @@ private:
 	int64_t m_cpu_cycle = 0;           // total CPU cycles since boot
 	int64_t m_z80_cycle_target = 0;    // in CPU cycles
 	uint64_t m_frame = 0;
-	int m_line_start_cycle = 0;
+	int64_t m_line_start_cycle = 0;    // ideal start of the current line
+	int m_line = 0;
+	bool m_hblank_pending = false;     // HBlank pin raised this line
+	bool m_frame_done = false;
 	int64_t m_trace_remaining = 0;
 };
 

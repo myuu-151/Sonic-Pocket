@@ -127,12 +127,8 @@ void tlcs900h_device::device_reset()
 #include "900htbl.hxx"
 
 
-int tlcs900_device::step()
+void tlcs900_device::step_irq_phase()
 {
-	const tlcs900inst *inst;
-
-	m_cycles = 0;
-
 	if ( m_check_irqs )
 	{
 		if ( m_irq_inhibit )
@@ -151,6 +147,12 @@ int tlcs900_device::step()
 	{
 		m_irq_inhibit = false;
 	}
+}
+
+
+void tlcs900_device::step_execute()
+{
+	const tlcs900inst *inst;
 
 	if ( m_halted )
 	{
@@ -175,14 +177,96 @@ int tlcs900_device::step()
 		(this->*inst->opfunc)();
 		m_cycles += inst->cycles;
 	}
+}
 
+
+void tlcs900_device::step_finish()
+{
 	tlcs900_handle_ad();
 
 	tlcs900_handle_timers();
 
 	tlcs900_check_hdma();
 
+	step_finished( m_cycles );
+}
+
+
+int tlcs900_device::step()
+{
+	m_cycles = 0;
+	step_irq_phase();
+	step_execute();
+	step_finish();
 	return m_cycles;
+}
+
+
+bool tlcs900_device::recompiled_step_begin( offs_t pc )
+{
+	m_cycles = 0;
+	m_pc.d = pc;
+	step_irq_phase();
+	if ( m_pc.d == pc && !m_halted )
+		return false;
+
+	/* An interrupt was accepted: the rest of this step executes at the
+	   vector, exactly like step() would. */
+	m_prefetch_clear = true;
+	step_execute();
+	step_finish();
+	return true;
+}
+
+
+void tlcs900_device::recompiled_step_end( int cycles )
+{
+	m_cycles += cycles;
+	step_finish();
+}
+
+
+uint8_t *tlcs900_device::control_reg8(uint8_t code)
+{
+	switch ( code )
+	{
+	case 0x22: case 0x42: return &m_dmam[0].b.l;
+	case 0x26: case 0x46: return &m_dmam[1].b.l;
+	case 0x2a: case 0x4a: return &m_dmam[2].b.l;
+	case 0x2e: case 0x4e: return &m_dmam[3].b.l;
+	default: return &m_dummy.b.l;
+	}
+}
+
+
+uint16_t *tlcs900_device::control_reg16(uint8_t code)
+{
+	switch ( code )
+	{
+	case 0x20: case 0x40: return &m_dmac[0].w.l;
+	case 0x24: case 0x44: return &m_dmac[1].w.l;
+	case 0x28: case 0x48: return &m_dmac[2].w.l;
+	case 0x2c: case 0x4c: return &m_dmac[3].w.l;
+	case 0x3c: case 0x7c: return &m_intnest;
+	default: return &m_dummy.w.l;
+	}
+}
+
+
+uint32_t *tlcs900_device::control_reg32(uint8_t code)
+{
+	switch ( code )
+	{
+	case 0x00: return &m_dmas[0].d;
+	case 0x04: return &m_dmas[1].d;
+	case 0x08: return &m_dmas[2].d;
+	case 0x0c: return &m_dmas[3].d;
+	case 0x10: case 0x20: return &m_dmad[0].d;
+	case 0x14: case 0x24: return &m_dmad[1].d;
+	case 0x18: case 0x28: return &m_dmad[2].d;
+	case 0x1c: case 0x2c: return &m_dmad[3].d;
+	default: return &m_dummy.d;
+	}
 }
 
 
